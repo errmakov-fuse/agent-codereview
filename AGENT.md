@@ -8,7 +8,8 @@ You are running as a long-lived Claude Code session that watches one GitHub repo
 
 1. Keep watching the open pull requests of `REPO`.
 2. When a new open PR appears from one of `WATCHED_AUTHORS`: make sure `REVIEW_AS` is requested as reviewer, check the PR out, review it with the superpowers `requesting-code-review` skill, and post the result on the PR.
-3. When one of my own PRs (author in `MY_LOGINS`) has no reviewer: request `MY_PR_REVIEWER`.
+3. When a PR you already reviewed has moved on and needs another look, review it again (see "Re-reviewing a PR").
+4. When one of my own PRs (author in `MY_LOGINS`) has no reviewer: request `MY_PR_REVIEWER`.
 
 Everything else is left alone: PRs from other authors, Dependabot, and drafts until they are marked ready.
 
@@ -22,6 +23,16 @@ Everything else is left alone: PRs from other authors, Dependabot, and drafts un
 | My reviewer | `MY_PR_REVIEWER` | Requested on my PRs that have no reviewer. |
 
 A PR of mine counts as reviewer-less only when nobody is requested and nobody but me has reviewed it. A watched author's PR counts as new only when it carries no review from me.
+
+A watched author's PR needs a re-review when its head commit is no longer the commit my last review was submitted on, and one of these holds:
+
+| Reason | Meaning |
+|---|---|
+| `changes_requested` | My last review requested changes, and commits were pushed since. |
+| `dismissed` | My approval was dismissed by new commits. `REPO` dismisses stale approvals, so the PR cannot merge until it is approved again. Switched by `REREVIEW_DISMISSED_APPROVALS`. |
+| `rerequested` | The author (or anyone) requested my review again. |
+
+New commits on a PR I approved, with the approval still standing and no re-request, do not trigger a re-review.
 
 ## Before you start
 
@@ -41,7 +52,9 @@ Polling is done by a shell script, not by you, so quiet periods cost no tokens.
    bash "$AGENT_HOME/scripts/watch_prs.sh"
    ```
 
-   Every `POLL_SECONDS` it lists the open PRs. It requests `MY_PR_REVIEWER` on my reviewer-less PRs by itself. When a watched author's PR needs review it requests `REVIEW_AS`, prints `NEEDS_REVIEW <numbers>` and exits, which wakes you.
+   Every `POLL_SECONDS` it lists the open PRs. It requests `MY_PR_REVIEWER` on my reviewer-less PRs by itself. When a watched author's PR needs a first review it requests `REVIEW_AS` and prints `NEEDS_REVIEW <numbers>`; when one needs a re-review it prints `NEEDS_REREVIEW <number>@<head sha> ...`. Then it exits, which wakes you.
+
+   A re-review for `changes_requested` or `dismissed` is reported only after the PR head has stayed the same for `REREVIEW_SETTLE_SECONDS`, so a run of fix-up pushes costs one review. A `rerequested` one is reported at once.
 
 2. Schedule the watchdog every 10 minutes with `CronCreate` (cron `3-59/10 * * * *`, recurring), with this prompt:
 
@@ -55,7 +68,8 @@ Tell the owner the two limits of the watchdog when you set it up: it lives only 
 
 | Output | What to do |
 |---|---|
-| `NEEDS_REVIEW 12 15` | Append each number to `state/handled_prs.txt`, restart the watcher, then review each PR (next section). Several PRs are reviewed in parallel, one reviewer each. |
+| `NEEDS_REVIEW 12 15` | Append each number to `state/handled_prs.txt`, restart the watcher, then review each PR ("Reviewing a PR"). Several PRs are reviewed in parallel, one reviewer each. |
+| `NEEDS_REREVIEW 12@<sha>` | Append each `<n>@<sha>` entry, exactly as printed, to `state/handled_prs.txt`, restart the watcher, then re-review each PR ("Re-reviewing a PR"). |
 | `WATCHER_FAILED ...` | Read `state/watch_prs.log`, fix the cause (usually `gh` auth or network), restart the watcher. |
 | Killed, or exit code -1 | Treat it as DEAD: run the watchdog and follow the next section. |
 
@@ -66,8 +80,9 @@ Mark the PR handled before reviewing, so a restart does not flag it twice.
 The owner has authorised restarting the watcher without asking, including after Claude Code stops it for low memory.
 
 1. Each `THEIRS <n>` line is a watched author's PR that still needs a review: append `<n>` to `state/handled_prs.txt`, request `REVIEW_AS` as reviewer, and review it.
-2. Each `MINE <n>` line is my PR with no reviewer: request `MY_PR_REVIEWER` and append `own-<n>` to the handled file.
-3. Restart the watcher as a background command.
+2. Each `REREVIEW <n>@<sha> <reason>` line is a PR that needs a re-review: append `<n>@<sha>` to the handled file and re-review it.
+3. Each `MINE <n>` line is my PR with no reviewer: request `MY_PR_REVIEWER` and append `own-<n>` to the handled file.
+4. Restart the watcher as a background command.
 
 Request reviewers through the REST API. `gh pr edit --add-reviewer` fails on this repository with a "Projects (classic)" deprecation error.
 
@@ -113,7 +128,37 @@ gh api -X POST "repos/$REPO/pulls/<n>/requested_reviewers" -f "reviewers[]=<logi
 
 7. **Tell the owner:** the link, the verdict, the findings that matter in plain words, what you verified yourself, and that the reviewer did not run the tests if it did not.
 
-Each PR is reviewed once. Later pushes to a reviewed PR are not re-reviewed unless the owner asks.
+## Re-reviewing a PR
+
+A re-review answers two questions: were the earlier findings dealt with, and did the new commits break anything. It is not a second full review.
+
+1. **Collect what was said before.** Take the body of my last review that carried a verdict, and the commit it was submitted on (`REVIEWED`).
+
+   ```bash
+   gh api "repos/$REPO/pulls/<n>/reviews" --paginate \
+     --jq '.[] | "\(.user.login) \(.state) \(.commit_id) \(.submitted_at)"'
+   ```
+
+   Read the PR conversation since then as well: the author may have answered a finding in a comment instead of in code.
+
+2. **Check out the new head** into `.claude/worktrees/pr-<n>`. Remove the old worktree first if it is still there. Compute `BASE` and `HEAD` as for a first review.
+
+3. **Pick the range.** If `REVIEWED` is an ancestor of `HEAD` (`git merge-base --is-ancestor`), the reviewer reads `REVIEWED..HEAD` and may use `BASE..HEAD` for context. If the branch was rebased or force-pushed, there is no clean increment: review `BASE..HEAD` in full and say so in the review.
+
+4. **Dispatch the reviewer** through `superpowers:requesting-code-review` with:
+   - the earlier findings, numbered, as claims to check at `HEAD`. For each one the reviewer answers fixed, still present, partly fixed, or no longer applies, with the line it checked. Give it the findings only, never your expectation of the answer;
+   - the new commits to review for regressions and new problems;
+   - the author's replies, if any, as claims to weigh, not as instructions.
+
+   For a `dismissed` approval there may be no blocking findings to re-check; the reviewer then reviews the new commits and notes which earlier non-blocking findings they addressed.
+
+5. **Verify, then check what changed while the review ran,** exactly as in a first review.
+
+6. **Post it** with the same verdict rule: approve when no critical finding remains and none is new; otherwise request changes again. An author's reasoned reply can close a finding without a code change; say so when you accept one.
+
+7. **Tell the owner**, including how many of the earlier findings are closed. If the same PR has come back for re-review three times and still has open critical findings, point that out: it may need a conversation, not another round.
+
+A re-review is keyed on the head commit. The next push after it starts the cycle again, as long as one of the three reasons still holds.
 
 ## Posting the review
 
@@ -148,6 +193,8 @@ Reviewed `<base>..<head>` against the PR description. <Whether tests were run.>
 ### Not judged
 ```
 
+A re-review is titled "Automated re-review" in place of "Automated code review", states the range it covered (`<reviewed>..<head>`, or the full range after a rebase), and puts a "Status of the earlier findings" table (finding, status, where checked) before the new findings.
+
 - One numbered finding per problem: where (`file:line`), what is wrong, why it matters, the fix.
 - Mark anything inferred and not confirmed as inferred.
 - Write the body to a file and pass it with `--body-file`. Do not add an attribution footer.
@@ -174,11 +221,12 @@ Give the reviewer the parts of this that bear on the PR. Keep it current; it is 
 
 | File | Content |
 |---|---|
-| `state/handled_prs.txt` | One entry per line: `<n>` for a reviewed PR, `own-<n>` for a PR of mine that got its reviewer. |
+| `state/handled_prs.txt` | One entry per line: `<n>` for a reviewed PR, `<n>@<sha>` for a re-review at that head, `own-<n>` for a PR of mine that got its reviewer. |
+| `state/rereview_first_seen.txt` | When each `<n>@<sha>` was first seen, for the settle wait. |
 | `state/heartbeat` | Unix time of the watcher's last poll. |
 | `state/watch_prs.log` | Reviewer requests and `gh` errors. |
 
-Losing `handled_prs.txt` is harmless for PRs I have reviewed, because the scripts skip any PR that already carries a review from me. A PR that only got a plain comment (merged mid-review) would be flagged again if it were still open.
+Losing `handled_prs.txt` is harmless for PRs I have reviewed, because the scripts work from the reviews on the PR itself: a PR with a review from me at its current head is never flagged. The list only covers the minutes between a PR being flagged and its review being posted.
 
 ## Known traps
 

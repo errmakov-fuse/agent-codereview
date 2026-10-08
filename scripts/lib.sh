@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Shared by watch_prs.sh and watchdog.sh: loads config.env and classifies open PRs.
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPTS/.." && pwd)"
 CONFIG="${AGENT_CODEREVIEW_CONFIG:-$ROOT/config.env}"
 STATE_DIR="${AGENT_CODEREVIEW_STATE:-$ROOT/state}"
 HANDLED="$STATE_DIR/handled_prs.txt"
 HEARTBEAT="$STATE_DIR/heartbeat"
 LOG="$STATE_DIR/watch_prs.log"
+FIRST_SEEN="$STATE_DIR/rereview_first_seen.txt"
 MAX_OPEN_PRS=100
 
 load_config() {
@@ -17,13 +19,14 @@ load_config() {
   # shellcheck source=/dev/null
   . "$CONFIG"
   local name
-  for name in REPO REVIEW_AS MY_LOGINS WATCHED_AUTHORS MY_PR_REVIEWER POLL_SECONDS HEARTBEAT_MAX_AGE_SECONDS; do
+  for name in REPO REVIEW_AS MY_LOGINS WATCHED_AUTHORS MY_PR_REVIEWER POLL_SECONDS \
+    HEARTBEAT_MAX_AGE_SECONDS REREVIEW_SETTLE_SECONDS REREVIEW_DISMISSED_APPROVALS; do
     if [ -z "${!name}" ]; then
       echo "config value missing: $name" >&2
       return 1
     fi
   done
-  mkdir -p "$STATE_DIR" && touch "$HANDLED" "$LOG"
+  mkdir -p "$STATE_DIR" && touch "$HANDLED" "$LOG" "$FIRST_SEEN"
 }
 
 # "a b" -> ["a","b"]. Logins end up inside a jq filter, so anything that is not a
@@ -42,31 +45,35 @@ json_array() {
   echo "[$out]"
 }
 
-# Prints one line per open PR that needs action, skipping drafts:
-#   MINE <n>    my PR with no reviewer requested and no review from anyone else
-#   THEIRS <n>  a watched author's PR that I have not reviewed
+# Prints the MINE / THEIRS / REREVIEW lines described in classify.jq.
 # Git Bash has no jq, so the filtering runs inside gh's own --jq.
 classify_open_prs() {
-  local me watched
+  local me watched dismissed=false
   me=$(json_array "$MY_LOGINS") || return 1
   watched=$(json_array "$WATCHED_AUTHORS") || return 1
+  [ "$REREVIEW_DISMISSED_APPROVALS" = "1" ] && dismissed=true
   gh pr list --repo "$REPO" --state open --limit "$MAX_OPEN_PRS" \
-    --json number,author,isDraft,reviewRequests,reviews \
-    --jq "$me as \$me | $watched as \$watched
-      | .[] | select(.isDraft | not)
-      | .author.login as \$author
-      | [.reviews[] | .author.login // \"\"] as \$reviewers
-      | if (\$me | any(. == \$author)) then
-          (if (.reviewRequests | length) == 0 and ((\$reviewers - \$me) | length) == 0
-           then \"MINE \(.number)\" else empty end)
-        elif (\$watched | any(. == \$author)) then
-          (if ((\$reviewers - (\$reviewers - \$me)) | length) == 0
-           then \"THEIRS \(.number)\" else empty end)
-        else empty end"
+    --json number,author,isDraft,headRefOid,reviewRequests,reviews \
+    --jq "$me as \$me | $watched as \$watched | $dismissed as \$rereview_dismissed | $(cat "$SCRIPTS/classify.jq")"
 }
 
 is_handled() {
   grep -qx "$1" "$HANDLED"
+}
+
+# A re-review waits until the PR head has stayed the same for
+# REREVIEW_SETTLE_SECONDS, so a run of fix-up pushes costs one review, not one
+# each. An explicit re-request from the author is taken as "ready" at once.
+rereview_ready() {
+  local key="$1" reason="$2" now first
+  [ "$reason" = "rerequested" ] && return 0
+  now=$(date +%s)
+  first=$(awk -v key="$key" '$1 == key { print $2; exit }' "$FIRST_SEEN")
+  if [ -z "$first" ]; then
+    echo "$key $now" >>"$FIRST_SEEN"
+    first=$now
+  fi
+  [ $((now - first)) -ge "$REREVIEW_SETTLE_SECONDS" ]
 }
 
 # The REST endpoint, because `gh pr edit --add-reviewer` fails on repositories
