@@ -2,9 +2,12 @@
 # One call tells the agent whether the watcher is running and what it missed.
 #
 #   ALIVE heartbeat <n>s ago   nothing to do
-#   DEAD heartbeat <n>s ago    followed by "handled: ..." and one MINE/THEIRS line
-#                              per open PR that still needs action; the agent
-#                              handles those and restarts watch_prs.sh
+#   DEAD heartbeat <n>s ago    followed by "handled: ..." and one line per open PR
+#                              that still needs action; the agent handles those
+#                              and restarts watch_prs.sh:
+#                                MINE <n>
+#                                THEIRS <n>
+#                                REREVIEW <n>@<head sha> <reason>
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -25,9 +28,13 @@ if ! open=$(classify_open_prs); then
   echo "LIST_FAILED could not list open PRs"
   exit 1
 fi
-while read -r kind number; do
+while read -r kind number head reason _; do
   case "$kind" in
     MINE) is_handled "own-$number" || echo "MINE $number" ;;
     THEIRS) is_handled "$number" || echo "THEIRS $number" ;;
+    REREVIEW)
+      is_handled "$number@$head" && continue
+      rereview_ready "$number@$head" "$reason" && echo "REREVIEW $number@$head $reason"
+      ;;
   esac
 done <<<"$open"

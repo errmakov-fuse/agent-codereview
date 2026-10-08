@@ -1,6 +1,6 @@
 # agent-codereview
 
-A Claude Code session that watches a GitHub repository and reviews pull requests for you. It requests you as reviewer on your teammates' new PRs, reviews each one with the superpowers `requesting-code-review` skill, and posts the findings as an approval or a change request. It also puts a reviewer on your own PRs when they have none.
+A Claude Code session that watches a GitHub repository and reviews pull requests for you. It requests you as reviewer on your teammates' new PRs, reviews each one with the superpowers `requesting-code-review` skill, and posts the findings as an approval or a change request. When a PR it asked changes on gets new commits, it reviews it again. It also puts a reviewer on your own PRs when they have none.
 
 ## What is in here
 
@@ -10,7 +10,9 @@ A Claude Code session that watches a GitHub repository and reviews pull requests
 | `config.env` | Repository, logins, paths and intervals. The only file to edit for another repo or team. |
 | `scripts/watch_prs.sh` | Polls the open PRs. Costs no tokens; wakes the session only when a PR needs review. |
 | `scripts/watchdog.sh` | Tells the session whether the watcher is alive and what it missed. |
-| `scripts/lib.sh` | Shared config loading and PR classification. |
+| `scripts/lib.sh` | Shared config loading and helpers. |
+| `scripts/classify.jq` | The rules that decide which open PRs need a first review, a re-review, or a reviewer. |
+| `tests/classify.sh` | Checks those rules against made-up PRs in `tests/classify_cases.json`. |
 | `skills/irl/` | The `irl` skill: shows one concrete case for a statement that is too abstract. |
 
 ## Requirements
@@ -42,7 +44,21 @@ bash scripts/watch_prs.sh --once --dry-run   # one poll; prints what it would re
 bash scripts/watchdog.sh                     # ALIVE, or DEAD plus the PRs needing action
 ```
 
-`watch_prs.sh --once` prints `QUIET` when nothing needs review, or `NEEDS_REVIEW <numbers>`.
+`watch_prs.sh --once` prints `QUIET` when nothing needs review, or `NEEDS_REVIEW <numbers>` and/or `NEEDS_REREVIEW <number>@<head sha>`.
+
+```bash
+bash tests/classify.sh                       # checks the classification rules; needs gh logged in
+```
+
+## When a PR is reviewed again
+
+A teammate's PR is re-reviewed when it has moved past the commit your last review was on, and one of these is true:
+
+- your last review requested changes;
+- your approval was dismissed by the new commits (`REREVIEW_DISMISSED_APPROVALS=1`);
+- you were requested as reviewer again.
+
+For the first two, the watcher waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (10 minutes by default), so several fix-up pushes cost one review. A re-request is acted on at once. The re-review checks whether each earlier finding was dealt with and reviews the new commits; it does not repeat the full review.
 
 Runtime state (the handled list, the heartbeat, the log) is written to `state/`, which is not committed. Set `AGENT_CODEREVIEW_STATE` to put it elsewhere, and `AGENT_CODEREVIEW_CONFIG` to use another config file.
 
@@ -57,6 +73,6 @@ Then `/irl <quote>` in any session, or ask to see something "in real life".
 ## Limits
 
 - The watchdog schedule lives in the session: it ends when Claude Code exits, and recurring jobs expire after 7 days.
-- Each PR is reviewed once. New commits pushed to a reviewed PR are not re-reviewed unless you ask.
+- New commits on a PR you approved are not re-reviewed while the approval stands and nobody re-requests you.
 - Draft PRs are skipped until they are marked ready.
 - At most 100 open PRs are looked at per poll.
