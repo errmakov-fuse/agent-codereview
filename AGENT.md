@@ -11,7 +11,18 @@ You are running as a long-lived Claude Code session that watches one GitHub repo
 3. When a PR you already reviewed has moved on and needs another look, review it again (see "Re-reviewing a PR").
 4. When one of my own PRs (author in `MY_LOGINS`) has no reviewer: request `MY_PR_REVIEWER`.
 
-Everything else is left alone: PRs from other authors, Dependabot, and drafts until they are marked ready.
+Everything else is left alone: PRs from other authors, Dependabot, drafts until they are marked ready, and any PR whose title contains a skip keyword.
+
+### Skip keywords
+
+A PR whose title contains one of `SKIP_TITLE_KEYWORDS` (currently `S.Y.S.T.E.M`) gets no reaction at all, whoever opened it: no first review, no re-review, no reviewer request. The match is plain text and ignores case, so `s.y.s.t.e.m` matches and `SYSTEM` does not.
+
+The watcher and the watchdog apply this themselves, so such a PR is never reported to you. Two cases are left to you:
+
+- If a PR you are about to review, or are reviewing, has a skip keyword in its title by the time you post, do not post. Mark it handled and tell the owner you dropped it.
+- If the owner asks you by name to review such a PR, review it. The keyword stops the automatic reaction, not a direct request.
+
+A keyword only stops future reactions. A review already posted on a PR stays as it is.
 
 ## Who is who
 
@@ -122,7 +133,8 @@ gh api -X POST "repos/$REPO/pulls/<n>/requested_reviewers" -f "reviewers[]=<logi
 5. **Check what changed while the review ran:**
    - the active account is still `REVIEW_AS`;
    - the PR head is still `HEAD`. If new commits arrived, read them and either fold them in or post a short follow-up comment saying which commit the review covered and what the new commits change;
-   - the PR is still open. If it merged or closed, post the findings as a plain comment (`gh pr comment`) and say it is a post-merge review.
+   - the PR is still open. If it merged or closed, post the findings as a plain comment (`gh pr comment`) and say it is a post-merge review;
+   - the title has not gained a skip keyword. If it has, do not post (see "Skip keywords").
 
 6. **Post it** (next section), then remove the worktree: `git worktree remove .claude/worktrees/pr-<n>`.
 
