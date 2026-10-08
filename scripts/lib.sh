@@ -45,16 +45,35 @@ json_array() {
   echo "[$out]"
 }
 
+# SKIP_TITLE_KEYWORDS -> ["one","two words"]. The keywords end up inside a jq
+# filter as string literals, so the two characters that could end one are refused.
+skip_keywords_json() {
+  local out="" keyword
+  for keyword in "${SKIP_TITLE_KEYWORDS[@]}"; do
+    [ -z "$keyword" ] && continue
+    case "$keyword" in
+      *\"* | *\\*)
+        echo "skip keyword may not contain \" or \\: $keyword" >&2
+        return 1
+        ;;
+    esac
+    out="$out${out:+,}\"$keyword\""
+  done
+  echo "[$out]"
+}
+
 # Prints the MINE / THEIRS / REREVIEW lines described in classify.jq.
 # Git Bash has no jq, so the filtering runs inside gh's own --jq.
 classify_open_prs() {
-  local me watched dismissed=false
+  local me watched skip dismissed=false
   me=$(json_array "$MY_LOGINS") || return 1
   watched=$(json_array "$WATCHED_AUTHORS") || return 1
+  skip=$(skip_keywords_json) || return 1
   [ "$REREVIEW_DISMISSED_APPROVALS" = "1" ] && dismissed=true
   gh pr list --repo "$REPO" --state open --limit "$MAX_OPEN_PRS" \
-    --json number,author,isDraft,headRefOid,reviewRequests,reviews \
-    --jq "$me as \$me | $watched as \$watched | $dismissed as \$rereview_dismissed | $(cat "$SCRIPTS/classify.jq")"
+    --json number,title,author,isDraft,headRefOid,reviewRequests,reviews \
+    --jq "$me as \$me | $watched as \$watched | $skip as \$skip_keywords | $dismissed as \$rereview_dismissed
+      | $(cat "$SCRIPTS/classify.jq")"
 }
 
 is_handled() {

@@ -3,14 +3,16 @@
 # compares the result with what each case should produce.
 #
 # The filter runs in gh's own jq, as it does in production, so this needs `gh`
-# to be logged in. It makes one harmless API call and reads nothing from it.
+# to be logged in. It makes one harmless API call per check and reads nothing from it.
 
 TESTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$TESTS/../scripts"
+SKIP='["S.Y.S.T.E.M","do not review"]'
 
 classify() {
-  local dismissed="$1"
-  gh api user --jq "[\"me-new\",\"me-old\"] as \$me | [\"mate\"] as \$watched | $dismissed as \$rereview_dismissed
+  local dismissed="$1" skip="$2"
+  gh api user --jq "[\"me-new\",\"me-old\"] as \$me | [\"mate\"] as \$watched | $skip as \$skip_keywords
+    | $dismissed as \$rereview_dismissed
     | $(cat "$TESTS/classify_cases.json") | $(cat "$SCRIPTS/classify.jq")"
 }
 
@@ -26,7 +28,12 @@ classify() {
 # 34 changes requested from my old login             35 changes requested, reviewed commit gone
 # 36 someone else requested changes, I approved      40 my approval dismissed, head moved
 # 41 only a comment from me, head moved
-expected_common="MINE 1
+#
+# Title keywords (cases 1-41 have no title):
+# 50 watched, keyword in the title                   51 watched, keyword in another case
+# 52 mine, keyword in the title                      53 watched, changes requested and moved, keyword
+# 54 watched, the keyword without its dots           55 watched, a keyword with spaces, another case
+expected_untitled="MINE 1
 MINE 4
 THEIRS 10
 THEIRS 13
@@ -52,10 +59,21 @@ check() {
 }
 
 check "dismissed approvals are re-reviewed when the switch is on" \
-  "$expected_common
-REREVIEW 40 h2 dismissed h1" "$(classify true)"
+  "$expected_untitled
+REREVIEW 40 h2 dismissed h1
+THEIRS 54" "$(classify true "$SKIP")"
 
 check "dismissed approvals are left alone when the switch is off" \
-  "$expected_common" "$(classify false)"
+  "$expected_untitled
+THEIRS 54" "$(classify false "$SKIP")"
+
+check "with no skip keywords the titled PRs are classified like any other" \
+  "$expected_untitled
+THEIRS 50
+THEIRS 51
+MINE 52
+REREVIEW 53 h2 changes_requested h1
+THEIRS 54
+THEIRS 55" "$(classify false "[]")"
 
 exit "$failed"

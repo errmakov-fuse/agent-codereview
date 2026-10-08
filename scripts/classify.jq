@@ -1,7 +1,9 @@
 # Classifies the open PRs listed by `gh pr list`. lib.sh prepends the bindings
-# for $me, $watched and $rereview_dismissed and passes the whole text to gh --jq.
+# for $me, $watched, $skip_keywords and $rereview_dismissed and passes the whole
+# text to gh --jq.
 #
-# Output, one line per PR that needs action (drafts are skipped):
+# Output, one line per PR that needs action. Drafts are skipped, and so is any
+# PR whose title contains one of $skip_keywords (plain text, case ignored):
 #   MINE <n>                                 my PR, nobody requested, nobody else reviewed
 #   THEIRS <n>                               a watched author's PR with no review from me
 #   REREVIEW <n> <head> <reason> <reviewed>  a watched author's PR that moved past my review
@@ -11,6 +13,8 @@
 
 .[]
 | select(.isDraft | not)
+| ((.title // "") | ascii_downcase) as $title
+| select($skip_keywords | any(. as $keyword | $title | contains($keyword | ascii_downcase)) | not)
 | . as $pr
 | ($pr.author.login // "") as $author
 | [$pr.reviews[] | (.author.login // "")] as $reviewers

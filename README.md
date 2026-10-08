@@ -62,6 +62,18 @@ For the first two, the watcher waits until the PR has had no new commits for `RE
 
 Runtime state (the handled list, the heartbeat, the log) is written to `state/`, which is not committed. Set `AGENT_CODEREVIEW_STATE` to put it elsewhere, and `AGENT_CODEREVIEW_CONFIG` to use another config file.
 
+## PRs it ignores
+
+A PR is ignored completely (no review, no re-review, no reviewer request) when its title contains one of the keywords in `SKIP_TITLE_KEYWORDS`:
+
+```bash
+SKIP_TITLE_KEYWORDS=("S.Y.S.T.E.M")
+SKIP_TITLE_KEYWORDS=("S.Y.S.T.E.M" "do not review")   # several, spaces allowed
+SKIP_TITLE_KEYWORDS=()                                 # ignore nothing
+```
+
+The match is plain text and ignores case. It applies to everyone's PRs, yours included. Drafts, Dependabot and authors outside `WATCHED_AUTHORS` are ignored as before.
+
 ## Install the irl skill
 
 ```bash
