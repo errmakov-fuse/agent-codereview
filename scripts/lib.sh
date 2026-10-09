@@ -20,7 +20,7 @@ load_config() {
   . "$CONFIG"
   local name
   for name in REPO REVIEW_AS MY_LOGINS WATCHED_AUTHORS MY_PR_REVIEWER POLL_SECONDS \
-    HEARTBEAT_MAX_AGE_SECONDS REREVIEW_SETTLE_SECONDS REREVIEW_DISMISSED_APPROVALS; do
+    HEARTBEAT_MAX_AGE_SECONDS REREVIEW_SETTLE_SECONDS REREVIEW_DISMISSED_APPROVALS REVIEW_DRAFTS; do
     if [ -z "${!name}" ]; then
       echo "config value missing: $name" >&2
       return 1
@@ -62,17 +62,27 @@ skip_keywords_json() {
   echo "[$out]"
 }
 
+# An on/off setting as a jq boolean: 1, true, yes or on (any case) is on.
+json_bool() {
+  case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes | on) echo true ;;
+    *) echo false ;;
+  esac
+}
+
 # Prints the MINE / THEIRS / REREVIEW lines described in classify.jq.
 # Git Bash has no jq, so the filtering runs inside gh's own --jq.
 classify_open_prs() {
-  local me watched skip dismissed=false
+  local me watched skip drafts dismissed
   me=$(json_array "$MY_LOGINS") || return 1
   watched=$(json_array "$WATCHED_AUTHORS") || return 1
   skip=$(skip_keywords_json) || return 1
-  [ "$REREVIEW_DISMISSED_APPROVALS" = "1" ] && dismissed=true
+  drafts=$(json_bool "$REVIEW_DRAFTS")
+  dismissed=$(json_bool "$REREVIEW_DISMISSED_APPROVALS")
   gh pr list --repo "$REPO" --state open --limit "$MAX_OPEN_PRS" \
     --json number,title,author,isDraft,headRefOid,reviewRequests,reviews \
-    --jq "$me as \$me | $watched as \$watched | $skip as \$skip_keywords | $dismissed as \$rereview_dismissed
+    --jq "$me as \$me | $watched as \$watched | $skip as \$skip_keywords
+      | $drafts as \$review_drafts | $dismissed as \$rereview_dismissed
       | $(cat "$SCRIPTS/classify.jq")"
 }
 

@@ -11,7 +11,22 @@ You are running as a long-lived Claude Code session that watches one GitHub repo
 3. When a PR you already reviewed has moved on and needs another look, review it again (see "Re-reviewing a PR").
 4. When one of my own PRs (author in `MY_LOGINS`) has no reviewer: request `MY_PR_REVIEWER`.
 
-Everything else is left alone: PRs from other authors, Dependabot, drafts until they are marked ready, and any PR whose title contains a skip keyword.
+Everything else is left alone: PRs from other authors, Dependabot, drafts nobody asked me to look at, and any PR whose title contains a skip keyword.
+
+### Drafts
+
+A draft from one of `WATCHED_AUTHORS` is reviewed in two cases:
+
+- my review is requested on it (`REVIEW_AS`, or any of `MY_LOGINS`, is among the requested reviewers). This holds whatever `REVIEW_DRAFTS` is set to;
+- `REVIEW_DRAFTS=true`, which treats every such draft like a ready PR, requested or not.
+
+Otherwise the draft waits until it is marked ready or someone requests my review.
+
+The same test applies to re-reviews. With `REVIEW_DRAFTS=false`, a draft I already reviewed is looked at again only when my review is requested again; new commits alone do not trigger it while it is still a draft.
+
+Review a draft like any other PR and post with the same verdict rule. Say in the verdict line that the PR was a draft at the reviewed commit, so the approval or change request is read in that light.
+
+My own drafts never get `MY_PR_REVIEWER` requested; that waits until they are ready.
 
 ### Skip keywords
 
@@ -155,7 +170,7 @@ A re-review answers two questions: were the earlier findings dealt with, and did
 
 2. **Check out the new head** into `.claude/worktrees/pr-<n>`. Remove the old worktree first if it is still there. Compute `BASE` and `HEAD` as for a first review.
 
-3. **Pick the range.** If `REVIEWED` is an ancestor of `HEAD` (`git merge-base --is-ancestor`), the reviewer reads `REVIEWED..HEAD` and may use `BASE..HEAD` for context. If the branch was rebased or force-pushed, there is no clean increment: review `BASE..HEAD` in full and say so in the review.
+3. **Pick the range.** If `REVIEWED` is an ancestor of `HEAD` (`git merge-base --is-ancestor`), the reviewer reads `REVIEWED..HEAD` and may use `BASE..HEAD` for context. If the branch was rebased or force-pushed, or the reviewed commit is no longer known, there is no clean increment: review `BASE..HEAD` in full and say so in the review.
 
 4. **Dispatch the reviewer** through `superpowers:requesting-code-review` with:
    - the earlier findings, numbered, as claims to check at `HEAD`. For each one the reviewer answers fixed, still present, partly fixed, or no longer applies, with the line it checked. Give it the findings only, never your expectation of the answer;

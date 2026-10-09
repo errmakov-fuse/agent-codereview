@@ -72,7 +72,18 @@ SKIP_TITLE_KEYWORDS=("S.Y.S.T.E.M" "do not review")   # several, spaces allowed
 SKIP_TITLE_KEYWORDS=()                                 # ignore nothing
 ```
 
-The match is plain text and ignores case. It applies to everyone's PRs, yours included. Drafts, Dependabot and authors outside `WATCHED_AUTHORS` are ignored as before.
+The match is plain text and ignores case. It applies to everyone's PRs, yours included. Dependabot and authors outside `WATCHED_AUTHORS` are always ignored.
+
+## Drafts
+
+A teammate's draft PR is reviewed when your review is requested on it. To review every draft from `WATCHED_AUTHORS`, requested or not, turn the knob on:
+
+```bash
+REVIEW_DRAFTS=false   # only drafts you are requested on (default)
+REVIEW_DRAFTS=true    # all of them, like ready PRs
+```
+
+With the knob off, a draft you already reviewed is looked at again only when you are requested again. Your own drafts never get a reviewer requested until they are ready.
 
 ## Install the irl skill
 
@@ -86,5 +97,4 @@ Then `/irl <quote>` in any session, or ask to see something "in real life".
 
 - The watchdog schedule lives in the session: it ends when Claude Code exits, and recurring jobs expire after 7 days.
 - New commits on a PR you approved are not re-reviewed while the approval stands and nobody re-requests you.
-- Draft PRs are skipped until they are marked ready.
 - At most 100 open PRs are looked at per poll.
