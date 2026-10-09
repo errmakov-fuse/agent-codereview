@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Polls the open PRs of REPO every POLL_SECONDS and costs no tokens while quiet.
 #
+# Which PRs count (drafts, skip keywords, re-review reasons) is decided in
+# classify.jq.
+#
 #   My reviewer-less PRs       requests MY_PR_REVIEWER and carries on.
 #   A watched author's new PR  requests REVIEW_AS and reports it for review.
 #   A watched author's PR that moved past my review (changes were requested, my
