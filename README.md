@@ -12,7 +12,10 @@ A Claude Code session that watches a GitHub repository and reviews pull requests
 | `scripts/watchdog.sh` | Tells the session whether the watcher is alive and what it missed. |
 | `scripts/lib.sh` | Shared config loading and helpers. |
 | `scripts/classify.jq` | The rules that decide which open PRs need a first review, a re-review, or a reviewer. |
+| `scripts/compare_patch.sh` | Tells whether a force-pushed PR still contains what was reviewed, so an unchanged one can be approved again cheaply. |
 | `tests/classify.sh` | Checks those rules against made-up PRs in `tests/classify_cases.json`. |
+| `windows/supervise.ps1` | Runs outside Claude: starts a new review session when none is watching, and notifies you. |
+| `windows/install.ps1` | Registers the scheduled task that runs the supervisor (`-Remove` deletes it). |
 | `skills/irl/` | The `irl` skill: shows one concrete case for a statement that is too abstract. |
 
 ## Requirements
@@ -37,6 +40,30 @@ The session starts the watcher in the background, schedules the watchdog every 1
 
 To keep the watcher from being stopped when the machine is short on memory, start Claude Code with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1` in its environment.
 
+## Keep it running across reboots
+
+The session, its watcher and its watchdog all end when Claude Code exits or the machine restarts, and nothing inside Claude can notice that. Install the supervisor once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\install.ps1
+```
+
+It registers a scheduled task for your user (no administrator rights) that runs `windows\supervise.ps1` every 10 minutes while you are logged on. Each run:
+
+| Situation | What it does |
+|---|---|
+| The watcher's heartbeat is fresh | Nothing. |
+| The heartbeat is stale and no session named `AGENT_SESSION_NAME` is running | Starts one in the background (`claude --bg`) with `AGENT.md` as its prompt, and shows a notification. |
+| The heartbeat is stale but such a session is listed | Waits. After 30 minutes of silence it starts a new session anyway: a session restored after a reboot has lost its watcher. |
+| It has already started 6 sessions today | Starts nothing more and notifies you once. |
+
+The new session runs with your default permission mode. Nothing is lost across the gap: on start the agent picks up every PR still waiting. What happened is in `state\supervise.log`; `claude agents` lists the sessions.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\supervise.ps1 -DryRun    # what it would do now
+powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Remove      # uninstall
+```
+
 ## Try the scripts by hand
 
 ```bash
@@ -59,6 +86,12 @@ A teammate's PR is re-reviewed when it has moved past the commit your last revie
 - you were requested as reviewer again.
 
 For the first two, the watcher waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (10 minutes by default), so several fix-up pushes cost one review. A re-request is acted on at once. The re-review checks whether each earlier finding was dealt with and reviews the new commits; it does not repeat the full review.
+
+A rebase or squash that changes nothing costs no review at all. The agent first runs `scripts/compare_patch.sh`, which compares the PR's patch at the commit you approved with the patch at the new head. If they are the same, or differ by a few lines it can read and confirm as behaviour-neutral, it approves again and says so; otherwise it does the full re-review.
+
+```bash
+bash scripts/compare_patch.sh 1230 a8b482c4adf266553e304f43a713841659d42bcb
+```
 
 Runtime state (the handled list, the heartbeat, the log) is written to `state/`, which is not committed. Set `AGENT_CODEREVIEW_STATE` to put it elsewhere, and `AGENT_CODEREVIEW_CONFIG` to use another config file.
 
@@ -95,6 +128,7 @@ Then `/irl <quote>` in any session, or ask to see something "in real life".
 
 ## Limits
 
-- The watchdog schedule lives in the session: it ends when Claude Code exits, and recurring jobs expire after 7 days.
+- The watchdog schedule lives in the session: it ends when Claude Code exits, and recurring jobs expire after 7 days. The agent renews it; the supervisor covers the session itself dying.
+- The supervisor runs only while you are logged on to Windows, and only on Windows.
 - New commits on a PR you approved are not re-reviewed while the approval stands and nobody re-requests you.
 - At most 100 open PRs are looked at per poll.
