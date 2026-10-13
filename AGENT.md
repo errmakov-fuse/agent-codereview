@@ -67,6 +67,7 @@ Check each of these once per session and stop with a clear message if one fails.
 - `gh api user --jq .login` prints `REVIEW_AS`. If it prints anything else, tell the owner. Do not run `gh auth switch`.
 - The superpowers plugin is installed: `claude plugin list` shows `superpowers@claude-plugins-official` enabled. If not, run `claude plugin install superpowers@claude-plugins-official`; the skill then appears after `/reload-plugins`.
 - `LOCAL_CHECKOUT` is a clone of `REPO`.
+- Nobody else is watching. Run `bash "$AGENT_HOME/scripts/watchdog.sh"`. If it prints `ALIVE` and you did not start that watcher, another session is doing this job: do not start a second watcher. Tell the owner and stop. If it prints `DEAD`, you are the one watching now; handle what it lists as described below.
 
 ## How the watching works
 
@@ -88,7 +89,13 @@ Polling is done by a shell script, not by you, so quiet periods cost no tokens.
 
    Replace `$AGENT_HOME` with the real path when you create the job.
 
-Tell the owner the two limits of the watchdog when you set it up: it lives only in this session, and recurring jobs expire after 7 days.
+The watchdog job lives only in this session and recurring jobs expire after 7 days. Whenever you are woken, check `CronList`; if the watchdog job is missing, or was created 6 or more days ago, create it again (and delete the old one).
+
+### What happens when this session dies
+
+A reboot, a crash or a closed terminal ends this session together with its watcher and its watchdog job, and nothing inside Claude can notice. `windows/supervise.ps1`, run every 10 minutes by Windows Task Scheduler, covers that from outside: when the heartbeat has gone stale and no session named `AGENT_SESSION_NAME` is running (or one is listed but has been silent for 30 minutes), it starts a new background session with this file as its prompt. You may be that session.
+
+Because the scripts decide from the reviews on GitHub, nothing is lost across such a gap: the first watchdog run or the first poll reports every PR still waiting.
 
 ### When the watcher exits
 
@@ -158,6 +165,21 @@ gh api -X POST "repos/$REPO/pulls/<n>/requested_reviewers" -f "reviewers[]=<logi
 ## Re-reviewing a PR
 
 A re-review answers two questions: were the earlier findings dealt with, and did the new commits break anything. It is not a second full review.
+
+0. **See whether anything changed at all.** The repository dismisses my approval on every force-push, and most force-pushes are a rebase or a squash that changes nothing. Before spending a review, run:
+
+   ```bash
+   bash "$AGENT_HOME/scripts/compare_patch.sh" <n> <REVIEWED sha>
+   ```
+
+   It compares the PR's whole patch at the commit I reviewed with the patch at the current head, ignoring context and line numbers.
+
+   You may approve again without dispatching a reviewer when all of these hold:
+   - my last review with a verdict was an approval (now dismissed). After a change request, an unchanged patch means the findings were not addressed, so this shortcut never applies;
+   - the result is `PATCH_IDENTICAL`; or `PATCH_SUBSET` and you have confirmed where the dropped part went (for example, commits it was stacked on merged as their own PRs); or `PATCH_CHANGED` by a handful of lines, each of which you have read in context and can state is behaviour-neutral (a renamed constant with the same value, an equivalent spelling of a parameter);
+   - the checks on the new head are green.
+
+   Then post an approval titled "Automated re-review" that says what was compared, which lines differ and why they are neutral, that no full review was run, and that the notes of the earlier review stand. Anything else, including any line you cannot classify, gets the full re-review below.
 
 1. **Collect what was said before.** Take the body of my last review that carried a verdict, and the commit it was submitted on (`REVIEWED`).
 
@@ -251,12 +273,14 @@ Give the reviewer the parts of this that bear on the PR. Keep it current; it is 
 | `state/handled_prs.txt` | One entry per line: `<n>` for a reviewed PR, `<n>@<sha>` for a re-review at that head, `own-<n>` for a PR of mine that got its reviewer. |
 | `state/rereview_first_seen.txt` | When each `<n>@<sha>` was first seen, for the settle wait. |
 | `state/heartbeat` | Unix time of the watcher's last poll. |
+| `state/supervise.log` | Sessions the Windows supervisor started, and why. |
 | `state/watch_prs.log` | Reviewer requests and `gh` errors. |
 
 Losing `handled_prs.txt` is harmless for PRs I have reviewed, because the scripts work from the reviews on the PR itself: a PR with a review from me at its current head is never flagged. The list only covers the minutes between a PR being flagged and its review being posted.
 
 ## Known traps
 
+- **Reboots and dead sessions.** Covered by `windows/supervise.ps1` when its scheduled task is installed (`windows/install.ps1`); see "What happens when this session dies". Its log is `state/supervise.log`. If the owner says reviews stopped, check that the task exists: `schtasks /Query /TN "agent-codereview supervisor"`.
 - **Low-memory kills.** Claude Code stops background commands when the machine is critically low on memory while the session is idle. The watchdog covers this. To prevent it, the owner can start Claude Code with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`.
 - **Account changes.** If `gh api user` stops printing `REVIEW_AS`, or a reviewer request fails with "Reviews may only be requested from collaborators", stop and tell the owner. Update `config.env` when logins change, and keep old logins in `MY_LOGINS` while their PRs are open.
 - **Private repositories under another account.** If `git clone` says "Repository not found", git is using a stored credential for a different account. Use `gh`'s token: `git -c credential.helper= -c credential.helper='!gh auth git-credential' clone <url>`.
