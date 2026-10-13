@@ -27,5 +27,12 @@ $command = 'conhost.exe --headless powershell.exe -NoProfile -ExecutionPolicy By
 schtasks.exe /Create /TN $TaskName /TR $command /SC MINUTE /MO $EveryMinutes /F
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# schtasks leaves the task unable to start on battery power, which on a laptop
+# means it rarely runs. Also: catch up after a missed run, never overlap, and do
+# not let a stuck run linger.
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+Set-ScheduledTask -TaskName $TaskName -Settings $settings | Out-Null
+
 Write-Output "Installed '$TaskName': every $EveryMinutes minutes while you are logged on."
 Write-Output "Log: $(Join-Path (Split-Path -Parent $PSScriptRoot) 'state\supervise.log')"
