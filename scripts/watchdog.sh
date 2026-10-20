@@ -17,12 +17,18 @@ now=$(date +%s)
 beat=$(cat "$HEARTBEAT" 2>/dev/null || echo 0)
 age=$((now - beat))
 
-if [ "$age" -le "$HEARTBEAT_MAX_AGE_SECONDS" ]; then
+if [ "$beat" != "0" ] && [ "$age" -le "$HEARTBEAT_MAX_AGE_SECONDS" ]; then
   echo "ALIVE heartbeat ${age}s ago"
   exit 0
 fi
 
-echo "DEAD heartbeat ${age}s ago"
+if [ "$beat" = "0" ]; then
+  # watch_prs.sh resets the heartbeat when it exits, so this is a watcher that
+  # stopped (often to hand over a PR whose exit never reached the session).
+  echo "DEAD watcher exited"
+else
+  echo "DEAD heartbeat ${age}s ago"
+fi
 echo "handled: $(tr '\n' ' ' <"$HANDLED")"
 if ! open=$(classify_open_prs); then
   echo "LIST_FAILED could not list open PRs"

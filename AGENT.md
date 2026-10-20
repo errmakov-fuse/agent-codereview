@@ -272,7 +272,7 @@ Give the reviewer the parts of this that bear on the PR. Keep it current; it is 
 |---|---|
 | `state/handled_prs.txt` | One entry per line: `<n>` for a reviewed PR, `<n>@<sha>` for a re-review at that head, `own-<n>` for a PR of mine that got its reviewer. |
 | `state/rereview_first_seen.txt` | When each `<n>@<sha>` was first seen, for the settle wait. |
-| `state/heartbeat` | Unix time of the watcher's last poll. |
+| `state/heartbeat` | Unix time of the watcher's last poll, or `0` once the watcher has exited (the watchdog then reports `DEAD watcher exited`). |
 | `state/supervise.log` | Sessions the Windows supervisor started, and why. |
 | `state/watch_prs.log` | Reviewer requests and `gh` errors. |
 
