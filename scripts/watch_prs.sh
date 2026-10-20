@@ -40,6 +40,16 @@ done
 
 load_config || exit 2
 
+# A watcher that has exited, including after handing over a PR, must not look
+# alive: the session it was meant to wake may never get the exit (a background
+# command stopped for low memory carries on detached), and the watchdog judges
+# by the heartbeat alone. So on any exit the heartbeat is reset, and the next
+# watchdog run reports DEAD and takes over the hand-off. Not with --once, which
+# is a manual check that may run beside a live watcher.
+if [ "$once" -eq 0 ]; then
+  trap 'echo 0 >"$HEARTBEAT"' EXIT
+fi
+
 ask_for_review() {
   local number="$1" reviewer="$2"
   if [ "$dry_run" -eq 1 ]; then

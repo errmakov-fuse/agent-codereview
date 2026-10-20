@@ -95,6 +95,11 @@ function Get-HeartbeatAgeSeconds {
     if (-not (Test-Path -LiteralPath $file)) { return [int]::MaxValue }
     $beat = 0L
     if (-not [long]::TryParse((Get-Content -LiteralPath $file -TotalCount 1).Trim(), [ref]$beat)) { return [int]::MaxValue }
+    if ($beat -eq 0) {
+        # watch_prs.sh writes 0 when it exits: count from the exit, so a watcher
+        # that just handed over a PR gets the same grace as one that went quiet.
+        $beat = ([DateTimeOffset](Get-Item -LiteralPath $file).LastWriteTimeUtc).ToUnixTimeSeconds()
+    }
     $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $beat
     if ($age -gt [int]::MaxValue) { return [int]::MaxValue }
     return [int]$age
