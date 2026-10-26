@@ -13,6 +13,25 @@
 # Skipped: any PR whose title contains one of $skip_keywords (plain text, case
 # ignored); my own drafts; and a watched author's draft unless my review is
 # requested on it or $review_drafts is on.
+#
+# A changes_requested or dismissed re-review also waits until the CI checks on
+# the head have finished, and is not reported while any of them failed: the
+# author has more to fix, and a review now would be spent on a moving target.
+# A re-request is reported whatever the checks say.
+
+# Each check on the head as one word: PENDING while it runs, else its outcome.
+def check_states:
+  [(.statusCheckRollup // [])[]
+   | if .__typename == "StatusContext" then (.state // "PENDING")
+     elif (.status // "COMPLETED") != "COMPLETED" then "PENDING"
+     else (.conclusion // "") end];
+
+def checks_settled:
+  check_states
+  | (any(. == "PENDING" or . == "EXPECTED")
+     or any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT"
+            or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE"))
+  | not;
 
 .[]
 | ((.title // "") | ascii_downcase) as $title
@@ -42,6 +61,8 @@
               empty
             elif $asked then
               "REREVIEW \($pr.number) \($pr.headRefOid) rerequested \($reviewed)"
+            elif ($pr | checks_settled | not) then
+              empty
             elif $last.state == "CHANGES_REQUESTED" then
               "REREVIEW \($pr.number) \($pr.headRefOid) changes_requested \($reviewed)"
             elif $last.state == "DISMISSED" and $rereview_dismissed then

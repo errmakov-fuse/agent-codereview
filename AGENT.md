@@ -83,17 +83,11 @@ Polling is done by a shell script, not by you, so quiet periods cost no tokens.
 
    A re-review for `changes_requested` or `dismissed` is reported only after the PR head has stayed the same for `REREVIEW_SETTLE_SECONDS`, so a run of fix-up pushes costs one review. A `rerequested` one is reported at once.
 
-2. Schedule the watchdog every 10 minutes with `CronCreate` (cron `3-59/10 * * * *`, recurring), with this prompt:
-
-   > PR watcher watchdog (scheduled check, not a user message). Run `bash "$AGENT_HOME/scripts/watchdog.sh"`. If it prints ALIVE, reply with one short line and do nothing else. If it prints DEAD, follow "When the watchdog says DEAD" in `$AGENT_HOME/AGENT.md`.
-
-   Replace `$AGENT_HOME` with the real path when you create the job.
-
-The watchdog job lives only in this session and recurring jobs expire after 7 days. Whenever you are woken, check `CronList`; if the watchdog job is missing, or was created 6 or more days ago, create it again (and delete the old one).
+2. Do not schedule a watchdog inside this session. Every wake-up re-reads this whole conversation, so a check every 10 minutes that finds nothing to do cost more than the reviews themselves. `windows/supervise.ps1` checks the heartbeat from outside, for free, and starts a fresh session when the watcher has been gone for 15 minutes. If `CronList` shows a watchdog job left over from an older version of this file, delete it.
 
 ### What happens when this session dies
 
-A reboot, a crash or a closed terminal ends this session together with its watcher and its watchdog job, and nothing inside Claude can notice. `windows/supervise.ps1`, run every 10 minutes by Windows Task Scheduler, covers that from outside: when the heartbeat has gone stale and no session named `AGENT_SESSION_NAME` is running (or one is listed but has been silent for 30 minutes), it starts a new background session with this file as its prompt. You may be that session.
+A reboot, a crash, a closed terminal or a watcher stopped for low memory ends the watching, and nothing inside Claude can notice. `windows/supervise.ps1`, run every 10 minutes by Windows Task Scheduler, covers that from outside: when the heartbeat has gone stale and no session named `AGENT_SESSION_NAME` is running (or one is listed but its watcher has been gone for 15 minutes), it starts a new background session with this file as its prompt. You may be that session.
 
 Because the scripts decide from the reviews on GitHub, nothing is lost across such a gap: the first watchdog run or the first poll reports every PR still waiting.
 
@@ -149,6 +143,13 @@ gh api -X POST "repos/$REPO/pulls/<n>/requested_reviewers" -f "reviewers[]=<logi
    - a numbered list of the specific things to establish for this PR, written as questions. Do not hand the reviewer your conclusions.
 
    Ask the reviewer to verify each finding against the code, quote the line, and say whether it confirmed the behaviour or is inferring it. Tell it what it must not run (Docker, the test suite against live services, anything that calls an external API).
+
+   Every tool call the reviewer makes re-sends its whole context, so a review of 120 small reads costs four times one of 30 large ones. Put these working rules in its prompt, as written:
+   - Save the diff once (`git diff BASE HEAD > "$TMP/pr-<n>.diff"`, with a temp directory you name) and read it in large slices, 300 to 600 lines per read. Do not re-run `git diff` per file.
+   - Read a whole function or a whole small file at once, not 20 lines at a time. Batch related greps into one command.
+   - Stay within this PR. Do not fetch or diff other PRs, even ones it builds on; note the dependency in "Not judged".
+   - Aim for about 25 tool calls and stop at 40. If the PR is too large for that, review the riskiest parts in depth, list what was only skimmed under "Not judged", and say so.
+   - Return the report only: no narration of the steps taken.
 
 4. **Check the findings yourself** before posting: open the lines behind the one or two findings the verdict rests on. Drop or soften anything you cannot confirm.
 
@@ -281,7 +282,7 @@ Losing `handled_prs.txt` is harmless for PRs I have reviewed, because the script
 ## Known traps
 
 - **Reboots and dead sessions.** Covered by `windows/supervise.ps1` when its scheduled task is installed (`windows/install.ps1`); see "What happens when this session dies". Its log is `state/supervise.log`. If the owner says reviews stopped, check that the task exists: `schtasks /Query /TN "agent-codereview supervisor"`.
-- **Low-memory kills.** Claude Code stops background commands when the machine is critically low on memory while the session is idle. The watchdog covers this. To prevent it, the owner can start Claude Code with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`.
+- **Low-memory kills.** Claude Code stops background commands when the machine is critically low on memory while the session is idle. The supervisor covers this within 15 minutes. To prevent it, the owner can start Claude Code with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`.
 - **Account changes.** If `gh api user` stops printing `REVIEW_AS`, or a reviewer request fails with "Reviews may only be requested from collaborators", stop and tell the owner. Update `config.env` when logins change, and keep old logins in `MY_LOGINS` while their PRs are open.
 - **Private repositories under another account.** If `git clone` says "Repository not found", git is using a stored credential for a different account. Use `gh`'s token: `git -c credential.helper= -c credential.helper='!gh auth git-credential' clone <url>`.
 - **Session forks and restarts** get a new `$CLAUDE_JOB_DIR`. State lives in `AGENT_HOME/state`, not there.

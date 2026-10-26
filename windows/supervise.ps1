@@ -18,7 +18,7 @@
 
 [CmdletBinding()]
 param(
-    [int]$TakeOverAfterMinutes = 30,
+    [int]$TakeOverAfterMinutes = 15,
     [int]$MaxStartsPerDay = 6,
     [switch]$DryRun,
     # For tests: another state directory, session name or first prompt.

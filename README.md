@@ -36,7 +36,7 @@ A Claude Code session that watches a GitHub repository and reviews pull requests
 
    Use the path where you cloned this repository.
 
-The session starts the watcher in the background, schedules the watchdog every 10 minutes, and reports each review as it is posted.
+The session starts the watcher in the background and reports each review as it is posted. It does not poll anything itself: the supervisor below notices a watcher that has stopped.
 
 To keep the watcher from being stopped when the machine is short on memory, start Claude Code with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1` in its environment.
 
@@ -54,7 +54,7 @@ It registers a scheduled task for your user (no administrator rights) that runs 
 |---|---|
 | The watcher's heartbeat is fresh | Nothing. |
 | The heartbeat is stale and no session named `AGENT_SESSION_NAME` is running | Starts one in the background (`claude --bg`) with `AGENT.md` as its prompt, and shows a notification. |
-| The heartbeat is stale but such a session is listed | Waits. After 30 minutes of silence it starts a new session anyway: a session restored after a reboot has lost its watcher. |
+| The heartbeat is stale but such a session is listed | Waits. After 15 minutes of silence it starts a new session anyway: a session restored after a reboot has lost its watcher. |
 | It has already started 6 sessions today | Starts nothing more and notifies you once. |
 
 The new session runs with your default permission mode. Nothing is lost across the gap: on start the agent picks up every PR still waiting. What happened is in `state\supervise.log`; `claude agents` lists the sessions.
@@ -85,7 +85,7 @@ A teammate's PR is re-reviewed when it has moved past the commit your last revie
 - your approval was dismissed by the new commits (`REREVIEW_DISMISSED_APPROVALS=1`);
 - you were requested as reviewer again.
 
-For the first two, the watcher waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (10 minutes by default), so several fix-up pushes cost one review. A re-request is acted on at once. The re-review checks whether each earlier finding was dealt with and reviews the new commits; it does not repeat the full review.
+For the first two, the watcher waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (30 minutes by default) and its CI checks have finished without a failure, so several fix-up pushes cost one review and a PR with red checks is left to its author. A re-request is acted on at once, whatever the checks say. The re-review checks whether each earlier finding was dealt with and reviews the new commits; it does not repeat the full review.
 
 A rebase or squash that changes nothing costs no review at all. The agent first runs `scripts/compare_patch.sh`, which compares the PR's patch at the commit you approved with the patch at the new head. If they are the same, or differ by a few lines it can read and confirm as behaviour-neutral, it approves again and says so; otherwise it does the full re-review.
 
@@ -128,7 +128,7 @@ Then `/irl <quote>` in any session, or ask to see something "in real life".
 
 ## Limits
 
-- The watchdog schedule lives in the session: it ends when Claude Code exits, and recurring jobs expire after 7 days. The agent renews it; the supervisor covers the session itself dying.
+- A stopped watcher is noticed by the supervisor only, so without its scheduled task nothing restarts the watching.
 - The supervisor runs only while you are logged on to Windows, and only on Windows.
 - New commits on a PR you approved are not re-reviewed while the approval stands and nobody re-requests you.
 - At most 100 open PRs are looked at per poll.
