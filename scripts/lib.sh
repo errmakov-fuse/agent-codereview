@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Shared by watch_prs.sh and watchdog.sh: loads config.env and classifies open PRs.
+# Shared by the scripts: loads config.env, classifies open PRs, and keeps the
+# per-review lock and attempt counts.
+
+# A scheduled task starts with a bare PATH; gh and claude live in the user's bin dirs.
+PATH="$HOME/bin:$HOME/.local/bin:/c/Program Files/nodejs:$PATH"
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPTS/.." && pwd)"
 CONFIG="${AGENT_CODEREVIEW_CONFIG:-$ROOT/config.env}"
 STATE_DIR="${AGENT_CODEREVIEW_STATE:-$ROOT/state}"
 HANDLED="$STATE_DIR/handled_prs.txt"
-HEARTBEAT="$STATE_DIR/heartbeat"
-LOG="$STATE_DIR/watch_prs.log"
+LOG="$STATE_DIR/poll.log"
 FIRST_SEEN="$STATE_DIR/rereview_first_seen.txt"
+ATTEMPTS="$STATE_DIR/attempts.txt"
+GAVE_UP="$STATE_DIR/gave_up.txt"
+RUNNING_DIR="$STATE_DIR/running"
+RUNS_DIR="$STATE_DIR/runs"
+REVIEWS_LOG="$STATE_DIR/reviews.log"
 MAX_OPEN_PRS=100
 
 load_config() {
@@ -19,14 +27,20 @@ load_config() {
   # shellcheck source=/dev/null
   . "$CONFIG"
   local name
-  for name in REPO REVIEW_AS MY_LOGINS WATCHED_AUTHORS MY_PR_REVIEWER POLL_SECONDS \
-    HEARTBEAT_MAX_AGE_SECONDS REREVIEW_SETTLE_SECONDS REREVIEW_DISMISSED_APPROVALS REVIEW_DRAFTS; do
+  for name in REPO BASE_BRANCH LOCAL_CHECKOUT REVIEW_AS MY_LOGINS WATCHED_AUTHORS MY_PR_REVIEWER \
+    POLL_SECONDS REREVIEW_SETTLE_SECONDS REREVIEW_DISMISSED_APPROVALS REVIEW_DRAFTS \
+    ORCHESTRATOR_MODEL REVIEWER_MODEL MAX_PARALLEL_REVIEWS RUN_TIMEOUT_MINUTES MAX_RUN_USD MAX_ATTEMPTS; do
     if [ -z "${!name}" ]; then
       echo "config value missing: $name" >&2
       return 1
     fi
   done
-  mkdir -p "$STATE_DIR" && touch "$HANDLED" "$LOG" "$FIRST_SEEN"
+  mkdir -p "$STATE_DIR" "$RUNNING_DIR" "$RUNS_DIR" &&
+    touch "$HANDLED" "$LOG" "$FIRST_SEEN" "$ATTEMPTS" "$GAVE_UP" "$REVIEWS_LOG"
+}
+
+log() {
+  echo "$(date -u +%FT%TZ) $*" >>"$LOG"
 }
 
 # "a b" -> ["a","b"]. Logins end up inside a jq filter, so anything that is not a
@@ -109,4 +123,62 @@ rereview_ready() {
 # that still have classic Projects ("Projects (classic) is being deprecated").
 request_reviewer() {
   gh api -X POST "repos/$REPO/pulls/$1/requested_reviewers" -f "reviewers[]=$2" --jq '.number'
+}
+
+# --- Review runs -------------------------------------------------------------
+# A review is keyed "<n>" (first review) or "<n>@<head sha>" (re-review at that head).
+
+# True while a live run_review.sh holds the key. A lock whose process is gone
+# (killed by the task's time limit, a reboot) does not count.
+run_is_live() {
+  local pid
+  pid=$(cat "$RUNNING_DIR/$1/pid" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+live_run_count() {
+  local dir count=0
+  for dir in "$RUNNING_DIR"/*/; do
+    [ -d "$dir" ] || continue
+    run_is_live "$(basename "$dir")" && count=$((count + 1))
+  done
+  echo "$count"
+}
+
+# Takes the lock for a key, or fails if a live run holds it. mkdir is atomic, so
+# two polls that pick the same PR at once start one run.
+take_run_lock() {
+  local dir="$RUNNING_DIR/$1"
+  if ! mkdir "$dir" 2>/dev/null; then
+    run_is_live "$1" && return 1
+    rm -rf "$dir"
+    mkdir "$dir" 2>/dev/null || return 1
+  fi
+  echo "$$" >"$dir/pid"
+}
+
+release_run_lock() {
+  rm -rf "${RUNNING_DIR:?}/$1"
+}
+
+attempts_of() {
+  awk -v key="$1" '$1 == key { n = $2 } END { print n + 0 }' "$ATTEMPTS"
+}
+
+count_attempt() {
+  local n
+  n=$(($(attempts_of "$1") + 1))
+  { grep -v "^$1 " "$ATTEMPTS"; echo "$1 $n"; } >"$ATTEMPTS.tmp" && mv "$ATTEMPTS.tmp" "$ATTEMPTS"
+  echo "$n"
+}
+
+# Parallel runs fetch into the same repository; git's ref locks then make one of
+# two simultaneous fetches fail. Try a few times.
+git_fetch() {
+  local try
+  for try in 1 2 3 4; do
+    git fetch -q "$@" 2>/dev/null && return 0
+    sleep $((try * 5))
+  done
+  git fetch -q "$@"
 }
