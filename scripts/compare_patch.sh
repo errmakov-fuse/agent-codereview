@@ -40,7 +40,7 @@ if [ -z "$LOCAL_CHECKOUT" ] || [ -z "$BASE_BRANCH" ]; then
 fi
 cd "$LOCAL_CHECKOUT" || exit 2
 
-git fetch -q origin "$BASE_BRANCH" "+pull/$number/head:refs/remotes/origin/pr-$number" || exit 2
+git_fetch origin "$BASE_BRANCH" "+pull/$number/head:refs/remotes/origin/pr-$number" || exit 2
 git fetch -q origin "$reviewed" 2>/dev/null
 head=$(git rev-parse "origin/pr-$number")
 if ! git cat-file -e "$reviewed^{commit}" 2>/dev/null; then

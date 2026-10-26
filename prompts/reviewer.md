@@ -55,7 +55,7 @@ Categorize by actual severity; not everything is Critical. Say what is done well
 
 ## Report
 
-Return only the report, in this layout, without narrating your steps:
+Return the report in this layout:
 
 ### Strengths
 ### Critical (must fix before merge)
@@ -64,7 +64,7 @@ Return only the report, in this layout, without narrating your steps:
 For each issue: `file:line`, what is wrong, why it matters, the fix. Mark inferred findings as inferred.
 ### Answers to the questions
 ### Not judged
-Every behaviour you considered and set aside, and every part you only skimmed, one line each with the reason. Write "nothing" if there is none.
+Parts of the change you did not review in depth, and questions you could not settle from the code, one line each with the reason. Write "nothing" if there is none.
 ### Assessment
 **Ready to merge?** Yes | With fixes | No
 **Reasoning:** one or two sentences.
