@@ -38,6 +38,11 @@ classify() {
 # 60 draft, my review requested                      61 draft, someone else requested
 # 62 draft, my review requested, keyword in title    63 draft, changes requested and moved, not requested
 # 64 draft, changes requested and moved, re-requested 65 my own draft
+#
+# CI checks on the head of a PR whose changes I requested (all moved past h1):
+# 70 a check still running                           71 a check failed
+# 72 checks passed or skipped                        73 a check failed, but I was re-requested
+# 74 my approval dismissed, a status still pending   75 a cancelled check, which counts as finished
 expected_ready="MINE 1
 MINE 4
 THEIRS 10
@@ -70,12 +75,18 @@ check "dismissed approvals are re-reviewed when the switch is on" \
   "$expected_ready
 REREVIEW 40 h2 dismissed h1
 THEIRS 54
-$expected_requested_drafts" "$(classify true "$SKIP" false)"
+$expected_requested_drafts
+REREVIEW 72 h2 changes_requested h1
+REREVIEW 73 h2 rerequested h1
+REREVIEW 75 h2 changes_requested h1" "$(classify true "$SKIP" false)"
 
 check "dismissed approvals are left alone when the switch is off" \
   "$expected_ready
 THEIRS 54
-$expected_requested_drafts" "$(classify false "$SKIP" false)"
+$expected_requested_drafts
+REREVIEW 72 h2 changes_requested h1
+REREVIEW 73 h2 rerequested h1
+REREVIEW 75 h2 changes_requested h1" "$(classify false "$SKIP" false)"
 
 check "with no skip keywords the titled PRs are classified like any other" \
   "$expected_ready
@@ -87,7 +98,10 @@ THEIRS 54
 THEIRS 55
 THEIRS 60
 THEIRS 62
-REREVIEW 64 h2 rerequested h1" "$(classify false "[]" false)"
+REREVIEW 64 h2 rerequested h1
+REREVIEW 72 h2 changes_requested h1
+REREVIEW 73 h2 rerequested h1
+REREVIEW 75 h2 changes_requested h1" "$(classify false "[]" false)"
 
 check "with REVIEW_DRAFTS on, a watched author's drafts are classified like ready PRs" \
   "MINE 1
@@ -104,6 +118,9 @@ THEIRS 54
 THEIRS 60
 THEIRS 61
 REREVIEW 63 h2 changes_requested h1
-REREVIEW 64 h2 rerequested h1" "$(classify false "$SKIP" true)"
+REREVIEW 64 h2 rerequested h1
+REREVIEW 72 h2 changes_requested h1
+REREVIEW 73 h2 rerequested h1
+REREVIEW 75 h2 changes_requested h1" "$(classify false "$SKIP" true)"
 
 exit "$failed"

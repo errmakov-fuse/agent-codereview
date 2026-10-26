@@ -80,7 +80,7 @@ classify_open_prs() {
   drafts=$(json_bool "$REVIEW_DRAFTS")
   dismissed=$(json_bool "$REREVIEW_DISMISSED_APPROVALS")
   gh pr list --repo "$REPO" --state open --limit "$MAX_OPEN_PRS" \
-    --json number,title,author,isDraft,headRefOid,reviewRequests,reviews \
+    --json number,title,author,isDraft,headRefOid,reviewRequests,reviews,statusCheckRollup \
     --jq "$me as \$me | $watched as \$watched | $skip as \$skip_keywords
       | $drafts as \$review_drafts | $dismissed as \$rereview_dismissed
       | $(cat "$SCRIPTS/classify.jq")"
