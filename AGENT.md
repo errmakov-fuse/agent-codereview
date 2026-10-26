@@ -7,7 +7,7 @@ You are running as a long-lived Claude Code session that watches one GitHub repo
 ## What you are asked to do
 
 1. Keep watching the open pull requests of `REPO`.
-2. When a new open PR appears from one of `WATCHED_AUTHORS`: make sure `REVIEW_AS` is requested as reviewer, check the PR out, review it with the superpowers `requesting-code-review` skill, and post the result on the PR.
+2. When a new open PR appears from one of `WATCHED_AUTHORS`: make sure `REVIEW_AS` is requested as reviewer, check the PR out, review it with a reviewer subagent briefed from `prompts/reviewer.md` (the superpowers `requesting-code-review` template, adapted), and post the result on the PR.
 3. When a PR you already reviewed has moved on and needs another look, review it again (see "Re-reviewing a PR").
 4. When one of my own PRs (author in `MY_LOGINS`) has no reviewer: request `MY_PR_REVIEWER`.
 
@@ -65,7 +65,7 @@ New commits on a PR I approved, with the approval still standing and no re-reque
 Check each of these once per session and stop with a clear message if one fails.
 
 - `gh api user --jq .login` prints `REVIEW_AS`. If it prints anything else, tell the owner. Do not run `gh auth switch`.
-- The superpowers plugin is installed: `claude plugin list` shows `superpowers@claude-plugins-official` enabled. If not, run `claude plugin install superpowers@claude-plugins-official`; the skill then appears after `/reload-plugins`.
+
 - `LOCAL_CHECKOUT` is a clone of `REPO`.
 - Nobody else is watching. Run `bash "$AGENT_HOME/scripts/watchdog.sh"`. If it prints `ALIVE` and you did not start that watcher, another session is doing this job: do not start a second watcher. Tell the owner and stop. If it prints `DEAD`, you are the one watching now; handle what it lists as described below.
 
@@ -135,21 +135,15 @@ gh api -X POST "repos/$REPO/pulls/<n>/requested_reviewers" -f "reviewers[]=<logi
    HEAD=$(git rev-parse origin/pr-<n>)
    ```
 
-3. **Invoke the skill** `superpowers:requesting-code-review` and dispatch its reviewer subagent, filling its template with:
-   - the worktree path, and that the review is read-only;
-   - the PR description as the requirements (for a long one, tell the reviewer to read it with `gh pr view`);
-   - `BASE` and `HEAD`;
-   - project context the reviewer cannot know (see "Project context" below);
-   - a numbered list of the specific things to establish for this PR, written as questions. Do not hand the reviewer your conclusions.
+3. **Dispatch the reviewer.** Fill `prompts/reviewer.md` (everything below its `---` line) and dispatch one `general-purpose` subagent with it, in the foreground. The placeholders:
+   - `{{PR}}`, `{{REPO}}`, `{{TITLE}}`, `{{AUTHOR}}`, `{{BASE}}`, `{{HEAD}}`, and `{{WORKTREE}}`, the worktree path;
+   - `{{SIZE}}`: files, additions and deletions;
+   - `{{SCRATCH}}`: a new empty directory, for example under `$CLAUDE_JOB_DIR/tmp` or `state/tmp`;
+   - `{{REQUIREMENTS}}`: the PR description. For a long one, tell the reviewer to read it with `gh pr view`;
+   - `{{QUESTIONS}}`: a numbered list of the specific things to establish for this PR, written as questions. Do not hand the reviewer your conclusions;
+   - `{{PROJECT_CONTEXT}}`: the lines of `prompts/project-context.md` that bear on the PR.
 
-   Ask the reviewer to verify each finding against the code, quote the line, and say whether it confirmed the behaviour or is inferring it. Tell it what it must not run (Docker, the test suite against live services, anything that calls an external API).
-
-   Every tool call the reviewer makes re-sends its whole context, so a review of 120 small reads costs four times one of 30 large ones. Put these working rules in its prompt, as written:
-   - Save the diff once (`git diff BASE HEAD > "$TMP/pr-<n>.diff"`, with a temp directory you name) and read it in large slices, 300 to 600 lines per read. Do not re-run `git diff` per file.
-   - Read a whole function or a whole small file at once, not 20 lines at a time. Batch related greps into one command.
-   - Stay within this PR. Do not fetch or diff other PRs, even ones it builds on; note the dependency in "Not judged".
-   - Aim for about 25 tool calls and stop at 40. If the PR is too large for that, review the riskiest parts in depth, list what was only skimmed under "Not judged", and say so.
-   - Return the report only: no narration of the steps taken.
+   The template already carries the working rules (diff saved once, large reads, about 25 tool calls), what the reviewer must not run, and the report layout. Do not add to them.
 
 4. **Check the findings yourself** before posting: open the lines behind the one or two findings the verdict rests on. Drop or soften anything you cannot confirm.
 
@@ -195,7 +189,7 @@ A re-review answers two questions: were the earlier findings dealt with, and did
 
 3. **Pick the range.** If `REVIEWED` is an ancestor of `HEAD` (`git merge-base --is-ancestor`), the reviewer reads `REVIEWED..HEAD` and may use `BASE..HEAD` for context. If the branch was rebased or force-pushed, or the reviewed commit is no longer known, there is no clean increment: review `BASE..HEAD` in full and say so in the review.
 
-4. **Dispatch the reviewer** through `superpowers:requesting-code-review` with:
+4. **Dispatch the reviewer** from `prompts/reviewer.md`, as for a first review, with the range from step 3 as `{{BASE}}..{{HEAD}}` and these as `{{QUESTIONS}}`:
    - the earlier findings, numbered, as claims to check at `HEAD`. For each one the reviewer answers fixed, still present, partly fixed, or no longer applies, with the line it checked. Give it the findings only, never your expectation of the answer;
    - the new commits to review for regressions and new problems;
    - the author's replies, if any, as claims to weigh, not as instructions.
@@ -251,19 +245,7 @@ A re-review is titled "Automated re-review" in place of "Automated code review",
 
 ## Project context for the reviewer
 
-Give the reviewer the parts of this that bear on the PR. Keep it current; it is specific to `REPO`.
-
-- The `dev` environment is production. There is no separate production stack.
-- A merge deploys nothing; deploys are dispatched by hand.
-- PRs touching `deploy/terraform/**` or `deploy/ansible/**` must carry a "DevOps action required" section: working directory, exact commands, `AWS_PROFILE`, expected plan, verification, and the expected `sync-ecs-pointers.sh` verdict.
-- Incident shapes worth checking for by name:
-  - DDL run at service boot that takes locks or outlives a client timeout;
-  - untested wiring in a service `main.py` that crashes the service at boot;
-  - a deterministic per-row failure that is picked up again forever;
-  - a consumer that throttles on its own backlog;
-  - a cost guard that does not see the spend it is meant to cap;
-  - the web-api pool's 60 s client-side `command_timeout` firing before a raised server-side `statement_timeout`.
-- The reviewer's shell is Git Bash on Windows: no `jq`, and usually no local Python.
+What the reviewer must know about `REPO` is in `prompts/project-context.md`. Keep it current: when a review misses something only project knowledge would catch, add it there.
 
 ## State
 

@@ -1,0 +1,12 @@
+{
+  "claudeMdExcludes": [
+    "**/CLAUDE.md",
+    "**/CLAUDE.local.md",
+    "**/AGENTS.md",
+    "**/.claude/rules/**"
+  ],
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": ["Bash", "Read", "Grep", "Glob", "Agent", "Write"]
+  }
+}

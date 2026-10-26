@@ -1,6 +1,6 @@
 # agent-codereview
 
-A Claude Code session that watches a GitHub repository and reviews pull requests for you. It requests you as reviewer on your teammates' new PRs, reviews each one with the superpowers `requesting-code-review` skill, and posts the findings as an approval or a change request. When a PR it asked changes on gets new commits, it reviews it again. It also puts a reviewer on your own PRs when they have none.
+A Claude Code session that watches a GitHub repository and reviews pull requests for you. It requests you as reviewer on your teammates' new PRs, reviews each one with a reviewer subagent briefed from the superpowers `requesting-code-review` template, and posts the findings as an approval or a change request. When a PR it asked changes on gets new commits, it reviews it again. It also puts a reviewer on your own PRs when they have none.
 
 ## What is in here
 
@@ -16,11 +16,16 @@ A Claude Code session that watches a GitHub repository and reviews pull requests
 | `tests/classify.sh` | Checks those rules against made-up PRs in `tests/classify_cases.json`. |
 | `windows/supervise.ps1` | Runs outside Claude: starts a new review session when none is watching, and notifies you. |
 | `windows/install.ps1` | Registers the scheduled task that runs the supervisor (`-Remove` deletes it). |
+| `prompts/reviewer.md` | The reviewer subagent's prompt: the superpowers `requesting-code-review` template (MIT), with working rules that keep a review to about 25 tool calls. |
+| `prompts/project-context.md` | What the reviewer must know about the watched repository. Edit it for another repo. |
+| `scripts/claude_lean.sh` | Runs `claude -p` with a context of about 10K tokens instead of 51K: no global rules, plugins, MCP servers or unused tools. |
+| `scripts/measure_context.sh` | Prints that fixed context, to check after a Claude Code update. |
+| `claude/lean-settings.json` | The settings `claude_lean.sh` runs with. |
 | `skills/irl/` | The `irl` skill: shows one concrete case for a statement that is too abstract. |
 
 ## Requirements
 
-- Claude Code, with the superpowers plugin: `claude plugin install superpowers@claude-plugins-official`
+- Claude Code. The superpowers plugin is not needed: its reviewer template is copied, with changes, into `prompts/reviewer.md`.
 - `gh`, logged in as the account in `REVIEW_AS`, with write access to the watched repository
 - Git Bash (Windows) or any bash; `jq` is not needed
 - A local clone of the watched repository at `LOCAL_CHECKOUT`
