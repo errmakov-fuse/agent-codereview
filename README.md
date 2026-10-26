@@ -84,7 +84,7 @@ A teammate's PR is re-reviewed when it has moved past the commit your last revie
 
 For the first two, the pass waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (30 minutes by default) and its CI checks have finished without a failure. A re-request is acted on at once, whatever the checks say. The re-review checks whether each earlier finding was dealt with and reviews the new commits; for a small change it checks them itself instead of starting a reviewer. A rebase that changes nothing is approved again by `run_review.sh` itself, without starting Claude at all.
 
-After `MAX_CHANGE_ROUNDS` change requests (3 by default) new commits no longer start a re-review. The author gets one comment asking to re-request your review or talk it through, and you get a notification.
+After `MAX_CHANGE_ROUNDS` change requests (5 by default) new commits no longer start a re-review. The author gets one comment asking to re-request your review or talk it through, and you get a notification.
 
 ## PRs it ignores
 
