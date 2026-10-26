@@ -15,6 +15,7 @@ Nothing here needs a long-lived session any more. A Windows scheduled task runs 
 
 - A watched author's PR with no review from me gets a first review.
 - It gets a re-review when its head has moved past the commit of my last review and either I requested changes, my approval was dismissed (`REREVIEW_DISMISSED_APPROVALS`), or my review was requested again. The first two wait for `REREVIEW_SETTLE_SECONDS` of a quiet head and for green CI checks; a re-request acts at once.
+- After `MAX_CHANGE_ROUNDS` change requests on a PR, new commits stop starting re-reviews; the author gets one comment and a re-request still works.
 - Drafts are reviewed only when my review is requested on them, unless `REVIEW_DRAFTS=true`.
 - A PR whose title contains one of `SKIP_TITLE_KEYWORDS` (`S.Y.S.T.E.M`) is ignored completely. If the owner asks for such a PR by name, review it by hand: the keyword stops the automatic reaction, not a direct request.
 
@@ -52,6 +53,8 @@ Do not review a PR inside your own session when a run can do it: your session ca
 | `state/runs/<n>-<time>/` | One run: the prompt it got, the reviewer prompt, the review body, Claude's JSON result. Kept for 14 days. |
 | `state/attempts.txt` | Runs per key; at `MAX_ATTEMPTS` the PR is left alone and listed in `state/gave_up.txt`. Delete its lines to let it be tried again. |
 | `state/handled_prs.txt` | `own-<n>`: my PRs that got their reviewer. |
+| `state/capped.txt` | PRs that reached `MAX_CHANGE_ROUNDS` and got the one comment saying so. |
+| `state/last_poll` | When the last pass listed the PRs. Older than ten minutes while you are logged on means the scheduled task is not running. |
 
 `schtasks /Query /TN "agent-codereview poll"` shows whether the task is installed. A run's transcript is a normal Claude Code session: `claude --resume <session id>` from `AGENT_HOME`.
 

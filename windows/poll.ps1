@@ -94,6 +94,7 @@ $ErrorActionPreference = 'Continue'
         'NOT_POSTED' { Show-Toast "PR $(Format-Key $words[1]) not reviewed" (($words | Select-Object -Skip 2) -join ' ') }
         'FAILED' { Show-Toast "PR $(Format-Key $words[1]): review run failed" 'It is tried again on a later poll. See state\poll.log.' }
         'GAVE_UP' { Show-Toast "PR $(Format-Key $words[1]): giving up" 'Its review runs failed repeatedly. Review it by hand, or run scripts/run_review.sh.' }
+        'CAPPED' { Show-Toast "PR $($words[1]): no more automatic re-reviews" "Changes were requested $($words[2]) times. The author was asked to re-request your review or talk it through." }
         'POLL_FAILED' { Show-Toast 'PR reviewer cannot list PRs' 'See state\poll.log; usually gh auth or the network.' }
     }
 }

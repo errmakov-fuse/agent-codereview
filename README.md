@@ -54,6 +54,7 @@ There is no long-lived Claude session. That is where the cost was: a session tha
 ```bash
 bash scripts/poll.sh --dry-run            # what a pass would do now
 bash scripts/run_review.sh 1371 --test    # a full review of PR 1371, not posted
+bash scripts/run_review.sh 1371 --test --reviewer-model opus   # the same on another reviewer model
 bash scripts/run_review.sh 1371           # review PR 1371 and post it
 bash tests/classify.sh                    # checks the classification rules; needs gh logged in
 bash scripts/measure_context.sh           # the fixed context of a lean run (about 1 cent)
@@ -66,6 +67,8 @@ A run's prompt, the reviewer's prompt, the review body and Claude's JSON result 
 | Setting | Effect |
 |---|---|
 | `ORCHESTRATOR_MODEL`, `REVIEWER_MODEL` | Models of the run and of its reviewer subagent. |
+| `REVIEWER_MODEL_SMALL`, `SMALL_PR_MAX_LINES`, `RISKY_PATHS` | A change of at most this many lines that touches no risky path is reviewed on the smaller model. |
+| `MAX_CHANGE_ROUNDS` | After this many change requests on a PR, new commits stop starting re-reviews; the author gets one comment, and a re-request still works. |
 | `MAX_RUN_USD`, `RUN_TIMEOUT_MINUTES` | A run is stopped at this spend or time. |
 | `MAX_ATTEMPTS` | Failed runs per PR head before it is left to you, with a notification. |
 | `MAX_PARALLEL_REVIEWS` | Reviews running at once. |
@@ -79,7 +82,9 @@ A teammate's PR is re-reviewed when it has moved past the commit your last revie
 - your approval was dismissed by the new commits (`REREVIEW_DISMISSED_APPROVALS=true`);
 - you were requested as reviewer again.
 
-For the first two, the pass waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (30 minutes by default) and its CI checks have finished without a failure. A re-request is acted on at once, whatever the checks say. The re-review checks whether each earlier finding was dealt with and reviews the new commits; for a small change it checks them itself instead of starting a reviewer. A rebase that changes nothing is approved again from the patch comparison, without a review.
+For the first two, the pass waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (30 minutes by default) and its CI checks have finished without a failure. A re-request is acted on at once, whatever the checks say. The re-review checks whether each earlier finding was dealt with and reviews the new commits; for a small change it checks them itself instead of starting a reviewer. A rebase that changes nothing is approved again by `run_review.sh` itself, without starting Claude at all.
+
+After `MAX_CHANGE_ROUNDS` change requests (3 by default) new commits no longer start a re-review. The author gets one comment asking to re-request your review or talk it through, and you get a notification.
 
 ## PRs it ignores
 

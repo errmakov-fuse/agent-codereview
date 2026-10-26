@@ -6,6 +6,8 @@
 #   MINE <n>                                 my PR, nobody requested, nobody else reviewed
 #   THEIRS <n>                               a watched author's PR with no review from me
 #   REREVIEW <n> <head> <reason> <reviewed>  a watched author's PR that moved past my review
+#   CAPPED <n> <head> <rounds>               would be a changes_requested re-review, but I
+#                                            have requested changes $max_change_rounds times
 #
 # <reason> is rerequested, changes_requested or dismissed. <reviewed> is the
 # commit my last review was submitted on ("unknown" when GitHub no longer has it).
@@ -18,6 +20,10 @@
 # the head have finished, and is not reported while any of them failed: the
 # author has more to fix, and a review now would be spent on a moving target.
 # A re-request is reported whatever the checks say.
+#
+# After $max_change_rounds change requests from me, new commits no longer start a
+# re-review by themselves (CAPPED): rounds that keep failing need a conversation.
+# A re-request still starts one. 0 turns the cap off.
 
 # Each check on the head as one word: PENDING while it runs, else its outcome.
 def check_states:
@@ -64,7 +70,12 @@ def checks_settled:
             elif ($pr | checks_settled | not) then
               empty
             elif $last.state == "CHANGES_REQUESTED" then
-              "REREVIEW \($pr.number) \($pr.headRefOid) changes_requested \($reviewed)"
+              ([$mine[] | select(.state == "CHANGES_REQUESTED")] | length) as $rounds
+              | if $max_change_rounds > 0 and $rounds >= $max_change_rounds then
+                  "CAPPED \($pr.number) \($pr.headRefOid) \($rounds)"
+                else
+                  "REREVIEW \($pr.number) \($pr.headRefOid) changes_requested \($reviewed)"
+                end
             elif $last.state == "DISMISSED" and $rereview_dismissed then
               "REREVIEW \($pr.number) \($pr.headRefOid) dismissed \($reviewed)"
             else
