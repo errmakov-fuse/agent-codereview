@@ -7,6 +7,14 @@
 #   ... --test                                        everything except posting: the
 #                                                     review is left in the run's scratch
 #                                                     directory (for trying prompt changes)
+#   ... --reviewer-model <model>                      overrides the routing below
+#
+# The reviewer subagent runs on REVIEWER_MODEL_SMALL when the change it reads has
+# at most SMALL_PR_MAX_LINES added plus removed lines and touches no RISKY_PATHS,
+# and on REVIEWER_MODEL otherwise.
+#
+# A re-review after a dismissed approval, whose patch is identical to the approved
+# one (a rebase), is approved again here, without a Claude run.
 #
 # The facts a review needs (PR metadata, checkout, earlier review, patch
 # comparison) are gathered here with plain gh and git, so the model spends no
@@ -24,9 +32,15 @@
 load_config || exit 2
 
 test_mode=0
+reviewer_model=""
 args=()
-for arg in "$@"; do
-  if [ "$arg" = "--test" ]; then test_mode=1; else args+=("$arg"); fi
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --test) test_mode=1 ;;
+    --reviewer-model) reviewer_model="$2"; shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
 done
 number="${args[0]}"
 head_arg="${args[1]}"
@@ -56,6 +70,40 @@ fail() {
   exit 1
 }
 
+# My approval was dismissed by commits that changed nothing in the patch (a rebase
+# or a squash): approve again with a fixed note, at no token cost. Only when the
+# dismissed review was an approval; a dismissed change request needs a review.
+reapprove_unchanged() {
+  local review_id dismissed_state body_file="$scratch/review.md" link
+  review_id=$(gh api "repos/$REPO/pulls/$number/reviews?per_page=100" --paginate \
+    --jq ".[] | select(.user.login as \$l | $(json_array "$MY_LOGINS") | index(\$l)) | select(.state != \"COMMENTED\") | .id" \
+    2>>"$LOG" | tail -1)
+  [ -n "$review_id" ] || return 0
+  dismissed_state=$(gh api "repos/$REPO/issues/$number/timeline?per_page=100" --paginate \
+    --jq ".[] | select(.event == \"review_dismissed\" and .dismissed_review.review_id == $review_id) | .dismissed_review.state" \
+    2>>"$LOG" | tail -1)
+  [ "$dismissed_state" = "approved" ] || return 0
+  cat >"$body_file" <<BODY
+## Automated re-review
+
+New commits dismissed my approval of \`${reviewed:0:7}\`. The PR's patch at \`${pr_head:0:7}\` adds and removes exactly the same lines as the patch I approved; only the base or the commit history changed. No review was run, and the earlier review stands.
+
+**Verdict: ready to merge**, as before.
+BODY
+  if [ "$test_mode" -eq 1 ]; then
+    echo "NOT_POSTED $key would approve again: unchanged patch (test run)"
+    exit 1
+  fi
+  gh pr review "$number" --repo "$REPO" --approve --body-file "$body_file" >>"$LOG" 2>&1 ||
+    fail "could not post the re-approval"
+  link=$(gh api "repos/$REPO/pulls/$number/reviews?per_page=100" --paginate \
+    --jq ".[] | select(.user.login == \"$REVIEW_AS\") | .html_url" 2>>"$LOG" | tail -1)
+  echo "$(date -u +%FT%TZ) $key cost=\$0.00 session=- RESULT posted approve $link unchanged patch, no Claude run" >>"$REVIEWS_LOG"
+  log "run $key: approved again, unchanged patch"
+  echo "POSTED $key approve $link"
+  exit 0
+}
+
 take_run_lock "$key" || { echo "BUSY $key"; exit 1; }
 trap cleanup EXIT
 attempt="test"
@@ -69,7 +117,7 @@ log "run $key started (attempt $attempt) in $run_dir"
 
 # --- The PR ---------------------------------------------------------------------
 gh pr view "$number" --repo "$REPO" \
-  --json url,title,body,author,state,isDraft,headRefOid,additions,deletions,changedFiles,reviews \
+  --json url,title,body,author,state,isDraft,headRefOid,additions,deletions,changedFiles,files,reviews \
   >"$scratch/pr.json" 2>>"$LOG" || fail "gh pr view failed"
 
 # Free text (title, description, earlier review) goes to files; only plain tokens
@@ -100,7 +148,7 @@ base=$(git merge-base "origin/$BASE_BRANCH" "$pr_head") || fail "no merge base w
 # --- What the prompts need ------------------------------------------------------
 export FILL_PR="$number" FILL_REPO="$REPO" FILL_URL="$url" FILL_AUTHOR="$author" \
   FILL_STATE="$state" FILL_DRAFT="$is_draft" FILL_HEAD="$pr_head" FILL_BASE="$base" \
-  FILL_REVIEW_AS="$REVIEW_AS" FILL_REVIEWER_MODEL="$REVIEWER_MODEL" \
+  FILL_REVIEW_AS="$REVIEW_AS" \
   FILL_SIZE="$changed_files files, +$additions -$deletions"
 FILL_WORKTREE="$(winpath "$worktree")"
 FILL_SCRATCH="$(winpath "$scratch")"
@@ -145,10 +193,27 @@ if [ -n "$head_arg" ]; then
   fi
   FILL_COMPARE_VERDICT="$(head -1 "$scratch/compare.txt")"
   FILL_RANGE_SIZE="$(git diff --shortstat "$range_base" "$pr_head" | sed 's/^ *//')"
+  if [ "$reason" = "dismissed" ] && [[ "$FILL_COMPARE_VERDICT" == PATCH_IDENTICAL* ]]; then
+    reapprove_unchanged
+  fi
   export FILL_REASON_TEXT FILL_RANGE_NOTE FILL_COMPARE_VERDICT FILL_RANGE_SIZE \
     FILL_REVIEWED="$reviewed" FILL_EARLIER_STATE="$earlier_state" \
     FILL_RANGE_BASE="$range_base" FILL_ROUND="$my_verdicts"
 fi
+
+# --- Which model reviews --------------------------------------------------------
+# Size and paths of what the reviewer reads: the whole PR, or the range since my
+# review for a re-review.
+range_lines=$(git diff --numstat "$range_base" "$pr_head" | awk '{ n += $1 + $2 } END { print n + 0 }')
+risky=$(git diff --name-only "$range_base" "$pr_head" | grep -E -m1 "${RISKY_PATHS:-^$}")
+if [ -z "$reviewer_model" ]; then
+  reviewer_model="$REVIEWER_MODEL"
+  if [ -n "${REVIEWER_MODEL_SMALL:-}" ] && [ "$range_lines" -le "${SMALL_PR_MAX_LINES:-0}" ] && [ -z "$risky" ]; then
+    reviewer_model="$REVIEWER_MODEL_SMALL"
+  fi
+fi
+export FILL_REVIEWER_MODEL="$reviewer_model"
+log "run $key: reviewer $reviewer_model ($range_lines lines${risky:+, touches $risky})"
 
 # The reviewer reads the range the orchestrator asks it to.
 FILL_BASE="$range_base" node "$SCRIPTS/fill_template.js" \

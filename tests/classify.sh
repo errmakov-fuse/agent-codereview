@@ -12,7 +12,7 @@ SKIP='["S.Y.S.T.E.M","do not review"]'
 classify() {
   local dismissed="$1" skip="$2" drafts="$3"
   gh api user --jq "[\"me-new\",\"me-old\"] as \$me | [\"mate\"] as \$watched | $skip as \$skip_keywords
-    | $drafts as \$review_drafts | $dismissed as \$rereview_dismissed
+    | $drafts as \$review_drafts | $dismissed as \$rereview_dismissed | 3 as \$max_change_rounds
     | $(cat "$TESTS/classify_cases.json") | $(cat "$SCRIPTS/classify.jq")"
 }
 
@@ -43,6 +43,10 @@ classify() {
 # 70 a check still running                           71 a check failed
 # 72 checks passed or skipped                        73 a check failed, but I was re-requested
 # 74 my approval dismissed, a status still pending   75 a cancelled check, which counts as finished
+#
+# Change-request rounds (the cap is 3 in these checks):
+# 80 three change requests, moved again              81 the same, but I was re-requested
+# 82 two change requests, moved again
 expected_ready="MINE 1
 MINE 4
 THEIRS 10
@@ -78,7 +82,10 @@ THEIRS 54
 $expected_requested_drafts
 REREVIEW 72 h2 changes_requested h1
 REREVIEW 73 h2 rerequested h1
-REREVIEW 75 h2 changes_requested h1" "$(classify true "$SKIP" false)"
+REREVIEW 75 h2 changes_requested h1
+CAPPED 80 h2 3
+REREVIEW 81 h2 rerequested h1
+REREVIEW 82 h2 changes_requested h1" "$(classify true "$SKIP" false)"
 
 check "dismissed approvals are left alone when the switch is off" \
   "$expected_ready
@@ -86,7 +93,10 @@ THEIRS 54
 $expected_requested_drafts
 REREVIEW 72 h2 changes_requested h1
 REREVIEW 73 h2 rerequested h1
-REREVIEW 75 h2 changes_requested h1" "$(classify false "$SKIP" false)"
+REREVIEW 75 h2 changes_requested h1
+CAPPED 80 h2 3
+REREVIEW 81 h2 rerequested h1
+REREVIEW 82 h2 changes_requested h1" "$(classify false "$SKIP" false)"
 
 check "with no skip keywords the titled PRs are classified like any other" \
   "$expected_ready
@@ -101,7 +111,10 @@ THEIRS 62
 REREVIEW 64 h2 rerequested h1
 REREVIEW 72 h2 changes_requested h1
 REREVIEW 73 h2 rerequested h1
-REREVIEW 75 h2 changes_requested h1" "$(classify false "[]" false)"
+REREVIEW 75 h2 changes_requested h1
+CAPPED 80 h2 3
+REREVIEW 81 h2 rerequested h1
+REREVIEW 82 h2 changes_requested h1" "$(classify false "[]" false)"
 
 check "with REVIEW_DRAFTS on, a watched author's drafts are classified like ready PRs" \
   "MINE 1
@@ -121,6 +134,9 @@ REREVIEW 63 h2 changes_requested h1
 REREVIEW 64 h2 rerequested h1
 REREVIEW 72 h2 changes_requested h1
 REREVIEW 73 h2 rerequested h1
-REREVIEW 75 h2 changes_requested h1" "$(classify false "$SKIP" true)"
+REREVIEW 75 h2 changes_requested h1
+CAPPED 80 h2 3
+REREVIEW 81 h2 rerequested h1
+REREVIEW 82 h2 changes_requested h1" "$(classify false "$SKIP" true)"
 
 exit "$failed"

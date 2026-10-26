@@ -17,6 +17,8 @@ GAVE_UP="$STATE_DIR/gave_up.txt"
 RUNNING_DIR="$STATE_DIR/running"
 RUNS_DIR="$STATE_DIR/runs"
 REVIEWS_LOG="$STATE_DIR/reviews.log"
+CAPPED="$STATE_DIR/capped.txt"
+LAST_POLL="$STATE_DIR/last_poll"
 MAX_OPEN_PRS=100
 
 load_config() {
@@ -36,7 +38,7 @@ load_config() {
     fi
   done
   mkdir -p "$STATE_DIR" "$RUNNING_DIR" "$RUNS_DIR" &&
-    touch "$HANDLED" "$LOG" "$FIRST_SEEN" "$ATTEMPTS" "$GAVE_UP" "$REVIEWS_LOG"
+    touch "$HANDLED" "$LOG" "$FIRST_SEEN" "$ATTEMPTS" "$GAVE_UP" "$REVIEWS_LOG" "$CAPPED"
 }
 
 log() {
@@ -88,6 +90,7 @@ json_bool() {
 # Git Bash has no jq, so the filtering runs inside gh's own --jq.
 classify_open_prs() {
   local me watched skip drafts dismissed
+  case "${MAX_CHANGE_ROUNDS:-0}" in *[!0-9]*) echo "MAX_CHANGE_ROUNDS must be a number" >&2; return 1 ;; esac
   me=$(json_array "$MY_LOGINS") || return 1
   watched=$(json_array "$WATCHED_AUTHORS") || return 1
   skip=$(skip_keywords_json) || return 1
@@ -97,6 +100,7 @@ classify_open_prs() {
     --json number,title,author,isDraft,headRefOid,reviewRequests,reviews,statusCheckRollup \
     --jq "$me as \$me | $watched as \$watched | $skip as \$skip_keywords
       | $drafts as \$review_drafts | $dismissed as \$rereview_dismissed
+      | ${MAX_CHANGE_ROUNDS:-0} as \$max_change_rounds
       | $(cat "$SCRIPTS/classify.jq")"
 }
 

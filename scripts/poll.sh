@@ -14,6 +14,7 @@
 #
 # Prints one line per event, which windows/poll.ps1 turns into notifications:
 #   REQUESTED <reviewer> #<n>       STARTED <key>       GAVE_UP <key>
+#   CAPPED #<n> <rounds>            a PR past MAX_CHANGE_ROUNDS got its one comment
 #   and the POSTED / NOT_POSTED / FAILED line of each run (see run_review.sh).
 # Prints nothing when there was nothing to do.
 #
@@ -39,6 +40,8 @@ if ! open=$(classify_open_prs 2>>"$LOG"); then
   echo "POLL_FAILED listing open PRs failed, see $LOG"
   exit 1
 fi
+# When the last pass got as far as the PR list; shows the scheduled task is alive.
+date -u +%FT%TZ >"$LAST_POLL"
 
 pids=()
 while read -r kind number head reason reviewed; do
@@ -56,6 +59,24 @@ while read -r kind number head reason reviewed; do
         echo "REQUESTED $MY_PR_REVIEWER #$number"
       else
         log "could not request $MY_PR_REVIEWER on #$number"
+      fi
+      continue
+      ;;
+    CAPPED)
+      # One comment per PR, however many more commits arrive.
+      grep -qx "$number" "$CAPPED" && continue
+      rounds="$reason"
+      if [ "$dry_run" -eq 1 ]; then
+        echo "DRY_RUN would comment on #$number: changes requested $rounds times, no more automatic re-reviews"
+        continue
+      fi
+      body="Automated review: I have requested changes on this PR $rounds times, so new commits no longer start another automatic re-review. When it is ready for another look, re-request my review, or let's talk the open points through."
+      if gh pr comment "$number" --repo "$REPO" --body "$body" >>"$LOG" 2>&1; then
+        echo "$number" >>"$CAPPED"
+        log "capped #$number after $rounds change requests"
+        echo "CAPPED #$number $rounds"
+      else
+        log "could not comment on capped #$number"
       fi
       continue
       ;;
