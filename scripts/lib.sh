@@ -18,6 +18,7 @@ RUNNING_DIR="$STATE_DIR/running"
 RUNS_DIR="$STATE_DIR/runs"
 REVIEWS_LOG="$STATE_DIR/reviews.log"
 CAPPED="$STATE_DIR/capped.txt"
+STALLED="$STATE_DIR/stalled.txt"
 LAST_POLL="$STATE_DIR/last_poll"
 PR_UPDATES_DIR="$STATE_DIR/pr_updates"
 MAX_OPEN_PRS=100
@@ -53,7 +54,7 @@ load_config() {
     case "${!name}" in *[!0-9]*) echo "$name must be a number" >&2; return 1 ;; esac
   done
   mkdir -p "$STATE_DIR" "$RUNNING_DIR" "$RUNS_DIR" "$PR_UPDATES_DIR" &&
-    touch "$HANDLED" "$LOG" "$FIRST_SEEN" "$ATTEMPTS" "$GAVE_UP" "$REVIEWS_LOG" "$CAPPED"
+    touch "$HANDLED" "$LOG" "$FIRST_SEEN" "$ATTEMPTS" "$GAVE_UP" "$REVIEWS_LOG" "$CAPPED" "$STALLED"
 }
 
 log() {
@@ -115,7 +116,7 @@ classify_open_prs() {
   drafts=$(json_bool "$REVIEW_DRAFTS")
   dismissed=$(json_bool "$REREVIEW_DISMISSED_APPROVALS")
   gh pr list --repo "$REPO" --state open --limit "$MAX_OPEN_PRS" \
-    --json number,title,author,isDraft,headRefOid,reviewRequests,reviews,statusCheckRollup \
+    --json number,title,author,isDraft,headRefOid,reviewDecision,reviewRequests,reviews,statusCheckRollup \
     --jq "$me as \$me | $watched as \$watched | $skip as \$skip_keywords
       | $drafts as \$review_drafts | $dismissed as \$rereview_dismissed
       | ${MAX_CHANGE_ROUNDS:-0} as \$max_change_rounds

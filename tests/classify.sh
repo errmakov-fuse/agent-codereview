@@ -47,6 +47,11 @@ classify() {
 # Change-request rounds (the cap is 3 in these checks):
 # 80 three change requests, moved again              81 the same, but I was re-requested
 # 82 two change requests, moved again
+#
+# My PRs that already have reviews from others (all ready unless noted):
+# 90 only comments, nobody requested: stalled         91 only comments, a reviewer requested
+# 92 approved                                         93 changes requested (my move)
+# 94 a draft with only comments                       95 an approval gone stale, then my own comment
 expected_ready="MINE 1
 MINE 4
 THEIRS 10
@@ -85,6 +90,8 @@ REREVIEW 73 h2 rerequested h1
 REREVIEW 75 h2 changes_requested h1
 CAPPED 80 h2 3
 REREVIEW 81 h2 rerequested h1
+STALLED 90 h1 buddy 2026-01-01T12:00:00Z
+STALLED 95 h1 buddy 2026-01-01T10:00:00Z
 REREVIEW 82 h2 changes_requested h1" "$(classify true "$SKIP" false)"
 
 check "dismissed approvals are left alone when the switch is off" \
@@ -96,6 +103,8 @@ REREVIEW 73 h2 rerequested h1
 REREVIEW 75 h2 changes_requested h1
 CAPPED 80 h2 3
 REREVIEW 81 h2 rerequested h1
+STALLED 90 h1 buddy 2026-01-01T12:00:00Z
+STALLED 95 h1 buddy 2026-01-01T10:00:00Z
 REREVIEW 82 h2 changes_requested h1" "$(classify false "$SKIP" false)"
 
 check "with no skip keywords the titled PRs are classified like any other" \
@@ -114,6 +123,8 @@ REREVIEW 73 h2 rerequested h1
 REREVIEW 75 h2 changes_requested h1
 CAPPED 80 h2 3
 REREVIEW 81 h2 rerequested h1
+STALLED 90 h1 buddy 2026-01-01T12:00:00Z
+STALLED 95 h1 buddy 2026-01-01T10:00:00Z
 REREVIEW 82 h2 changes_requested h1" "$(classify false "[]" false)"
 
 check "with REVIEW_DRAFTS on, a watched author's drafts are classified like ready PRs" \
@@ -137,6 +148,8 @@ REREVIEW 73 h2 rerequested h1
 REREVIEW 75 h2 changes_requested h1
 CAPPED 80 h2 3
 REREVIEW 81 h2 rerequested h1
+STALLED 90 h1 buddy 2026-01-01T12:00:00Z
+STALLED 95 h1 buddy 2026-01-01T10:00:00Z
 REREVIEW 82 h2 changes_requested h1" "$(classify false "$SKIP" true)"
 
 exit "$failed"
