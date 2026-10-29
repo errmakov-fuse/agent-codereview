@@ -12,7 +12,9 @@
 #   4. A watched PR gone from the open list gets one closing notice, only when
 #      its owner is live and the merger or closer is not one of MY_LOGINS, and
 #      leaves the watch list. One already closed when first seen gets no notice.
-#      So does a PR, or a whole repository, that GitHub says does not exist.
+#      So does a PR GitHub says does not exist. A repository GitHub will not
+#      resolve (deleted, or hidden from the current gh account) keeps its PRs
+#      and is skipped until it resolves again (unreachable.tsv; logged once).
 #
 # A live session gets the message in its inbox (send_to_session.js). A retired
 # background session is woken with `claude --bg --resume <session id> <message>`
@@ -44,17 +46,6 @@ UPDATE_MESSAGE='There is an update on PR %s: %s. Check it out whether any action
 MERGED_MESSAGE='PR %s was merged. Nothing is left to do on it; clean up its worktree and branch if you still have them.'
 CLOSED_MESSAGE='PR %s was closed without merging. Nothing is left to do on it; clean up its worktree and branch if you still have them.'
 MAX_DELIVERY_ATTEMPTS=2
-PER_PAGE=100
-
-# Node snippets for the gh answers (Git Bash has no jq).
-READ_STDIN='const data = JSON.parse(require("fs").readFileSync(0, "utf8"));'
-PARSE_PR_LIST="$READ_STDIN"'
-process.stdout.write(data.map((pr) => pr.number + "\t" + pr.updatedAt + "\n").join(""));'
-PARSE_PR_VIEW="$READ_STDIN"'
-process.stdout.write((data.state || "") + "\t" + ((data.mergedBy && data.mergedBy.login) || "") + "\n");'
-PARSE_CLOSER="$READ_STDIN"'
-const closed = data.filter((e) => e && e.event === "closed").pop();
-process.stdout.write(((closed && closed.actor && closed.actor.login) || "") + "\n");'
 
 dry_run=0
 backfill=0
@@ -76,6 +67,8 @@ if [ "$dry_run" -eq 1 ]; then
 fi
 # shellcheck source=/dev/null
 . "$SCRIPTS/watch_lib.sh"
+# shellcheck source=/dev/null
+. "$SCRIPTS/watch_gh.sh"
 trap 'watch_unlock; rm -rf "$scratch"' EXIT
 if [ "$dry_run" -eq 0 ] && ! watch_lock; then
   log "watch pass skipped: another pass holds $WATCH_LOCK"
@@ -330,39 +323,11 @@ check_pr() {
   fetch_updates "$repo" "$n" "$updated" "${seen#*$'\t'}"
 }
 
-# Runs gh with its stderr going to the log and to $scratch/gh_err, where the
-# caller can see why it failed.
-gh_logged() {
-  local status
-  gh "$@" 2>"$scratch/gh_err" </dev/null
-  status=$?
-  cat "$scratch/gh_err" >>"$LOG"
-  return "$status"
-}
-
 # Takes a PR off the watch list for good, without a notice.
 forget_pr() {
   closed_add "$1" "$2"
   watch_drop_pr "$1" "$2"
   pending_drop "$1" "$2"
-}
-
-# Who closed a PR: the actor of its last "closed" timeline event, or nothing.
-closer_of() {
-  local timeline
-  timeline=$(gh api "repos/$1/issues/$2/timeline?per_page=$PER_PAGE" 2>>"$LOG" </dev/null) || return 1
-  printf '%s' "$timeline" | node -e "$PARSE_CLOSER" 2>>"$LOG" || echo ""
-}
-
-# "<STATE>\t<merged by>" of a PR. Status 2 when GitHub says there is no such PR,
-# 1 when gh fails otherwise.
-pr_state() {
-  local view
-  if ! view=$(gh_logged pr view "$2" --repo "$1" --json state,mergedBy); then
-    grep -qiE 'could not resolve|no pull requests? found' "$scratch/gh_err" && return 2
-    return 1
-  fi
-  printf '%s' "$view" | node -e "$PARSE_PR_VIEW" 2>>"$LOG"
 }
 
 # The closing notice for a merged or closed PR, unless one of MY_LOGINS did it.
@@ -379,7 +344,8 @@ notify_closed() {
 
 # A watched PR missing from the open list; <complete> is 1 when that list held
 # every open PR. A PR never seen open gets no notice, and with a complete list
-# needs no call at all. Fails only when gh does.
+# needs no call at all. Fails when gh does: status 2 when GitHub would not
+# resolve the repository, 1 otherwise.
 settle_closed() {
   local repo="$1" n="$2" complete="$3" seen view status
   seen=$(seen_get "$repo" "$n")
@@ -389,12 +355,12 @@ settle_closed() {
   fi
   view=$(pr_state "$repo" "$n")
   status=$?
-  if [ "$status" -eq 2 ]; then
-    log "$repo#$n does not exist on GitHub; no longer watched"
+  if [ "$status" -eq 3 ]; then
+    log "$repo#$n does not exist on GitHub ($(gh_why)); no longer watched"
     forget_pr "$repo" "$n"
     return 0
   fi
-  [ "$status" -eq 0 ] || return 1
+  [ "$status" -eq 0 ] || return "$status"
   case "${view%%$'\t'*}" in
     OPEN) return 0 ;; # beyond the first MAX_OPEN_PRS of the open list
     MERGED | CLOSED) ;;
@@ -413,26 +379,24 @@ watched_in() {
   watch_prs | awk -F'\t' -v repo="$1" '$1 == repo { print $2 }'
 }
 
-# "<n>\t<updatedAt>" for each open PR of a repository. Status 2 when GitHub
-# says there is no such repository, 1 when gh fails otherwise.
-open_prs_of() {
-  local list
-  if ! list=$(gh_logged pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt); then
-    grep -q 'Could not resolve to a Repository' "$scratch/gh_err" && return 2
-    return 1
+# A repository GitHub would not resolve keeps its rows and waits; the outage is
+# logged when it starts, not on every pass.
+repo_unreachable() {
+  if unreachable_mark "$1"; then
+    log "GitHub cannot resolve the repository $1 (deleted, or hidden from the current gh account): $(gh_why); its PRs are kept and skipped until it can"
   fi
-  printf '%s' "$list" | node -e "$PARSE_PR_LIST" 2>>"$LOG"
+  return 0
 }
 
-# One gh pr list for a repository, then each of its watched PRs. Only a failed
-# list skips the repository; a PR that cannot be read waits for the next pass.
+# One gh pr list for a repository, then each of its watched PRs. A failed list,
+# or a repository GitHub stops resolving, skips the repository for this pass;
+# a PR that cannot be read otherwise waits for the next pass on its own.
 check_repo() {
   local repo="$1" open status complete=0 n updated
   open=$(open_prs_of "$repo")
   status=$?
   if [ "$status" -eq 2 ]; then
-    log "GitHub cannot resolve the repository $repo; its PRs are no longer watched"
-    for n in $(watched_in "$repo"); do forget_pr "$repo" "$n"; done
+    repo_unreachable "$repo"
     return 0
   elif [ "$status" -ne 0 ]; then
     log "listing the open PRs of $repo failed; its PRs wait for the next pass"
@@ -442,12 +406,20 @@ check_repo() {
   for n in $(watched_in "$repo"); do
     updated=$(awk -F'\t' -v n="$n" '$1 == n { print $2; exit }' <<<"$open")
     if [ -z "$updated" ]; then
-      settle_closed "$repo" "$n" "$complete" && continue
+      settle_closed "$repo" "$n" "$complete"
     else
-      check_pr "$repo" "$n" "$updated" && continue
+      check_pr "$repo" "$n" "$updated"
+    fi
+    status=$?
+    [ "$status" -eq 0 ] && continue
+    if [ "$status" -eq 2 ]; then
+      repo_unreachable "$repo"
+      return 0
     fi
     log "reading $repo#$n from GitHub failed; trying it again next pass"
   done
+  unreachable_clear "$repo" && log "the repository $repo is reachable again"
+  return 0
 }
 
 list_sessions || exit 1

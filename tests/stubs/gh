@@ -13,7 +13,9 @@
 #
 #   fail_O_R        every call on O/R fails as for a repository that does not exist
 #   flaky_O_R       every call on O/R fails as for a GitHub outage (HTTP 502)
-#   missing_<n>     gh pr view <n> fails as for a PR that does not exist
+#   missing_<n>     gh pr view <n> fails as for a PR number that does not exist
+#   nopr_<n>        gh pr view <n> fails with "no pull requests found"
+#   hidden_<n>      gh pr view <n> fails as for a repository it cannot see
 #   fail_view_<n>   gh pr view <n> fails with HTTP 502
 
 echo "gh $*" >>"$STUB_DIR/calls.log"
@@ -56,6 +58,14 @@ if [ -e "$STUB_DIR/flaky_${repo//\//_}" ]; then
 fi
 if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/missing_$3" ]; then
   echo "GraphQL: Could not resolve to a PullRequest with the number of $3. (repository.pullRequest)" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/nopr_$3" ]; then
+  echo "no pull requests found" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/hidden_$3" ]; then
+  echo "GraphQL: Could not resolve to a Repository with the name '$repo'. (repository)" >&2
   exit 1
 fi
 if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/fail_view_$3" ]; then

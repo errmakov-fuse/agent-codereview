@@ -13,7 +13,8 @@ WATCHER="$ROOT/scripts/watch_pr_updates.sh"
 
 SERVER_PID=
 WORK="$(mktemp -d)"
-trap '[ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
+# KEEP_WORK=1 keeps the state and stub dirs of every scenario for a look after a failure.
+trap '[ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; [ -n "$KEEP_WORK" ] || rm -rf "$WORK"' EXIT
 # node wants a path it can open; on Windows that is the mixed form (C:/...).
 WORK_DIR="$(cd "$WORK" && { pwd -W 2>/dev/null || pwd; })"
 HOME_DIR="$WORK_DIR/home"
@@ -42,7 +43,7 @@ check() {
     return
   fi
   failed=1
-  echo "FAIL $name"
+  echo "FAIL $name (scenario $scenario: $STATE)"
   echo "--- expected"
   echo "$expected"
   echo "--- actual"
@@ -421,12 +422,23 @@ run_pass
 wait_for_received_lines $((before + 2))
 check "unresolvable repository: only the readable one has events" \
   "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
-check "unresolvable repository: one log line names it" "1" \
-  "$(grep -c 'cannot resolve the repository Org/other' "$STATE/poll.log")"
+check "unresolvable repository: one log line names it, with gh's reason" "1 1" \
+  "$(grep -c 'Org/other' "$STATE/poll.log") $(grep -c "cannot resolve the repository Org/other .*: GraphQL: Could not resolve to a Repository" "$STATE/poll.log")"
 check "unresolvable repository: nothing is resumed" "" "$(resume_lines)"
-check "unresolvable repository: its watch rows are dropped" "" "$(awk -F'\t' '$1 == "Org/other"' "$D/watch.tsv")"
-check "unresolvable repository: its PRs are in closed.txt" "5 6" \
-  "$(awk -F'\t' '$1 == "Org/other" { print $2 }' "$D/closed.txt" | sort | tr '\n' ' ' | sed 's/ $//')"
+other_rows() { awk -F'\t' '$1 == "Org/other" { print $2 }' "$D/$1" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//'; }
+check "unresolvable repository: its watch rows are kept (it may only be hidden from this account)" "5 6" "$(other_rows watch.tsv)"
+check "unresolvable repository: nothing goes to closed.txt" "" "$(other_rows closed.txt)"
+check "unresolvable repository: unreachable.tsv has it" "Org/other" "$(cut -f1 "$D/unreachable.tsv")"
+run_pass
+check "still unresolvable next pass: no event, no new log line about it" "|1" \
+  "$(out)|$(grep -c 'Org/other' "$STATE/poll.log")"
+check "still unresolvable next pass: rows still kept" "5 6" "$(other_rows watch.tsv)"
+rm "$STUB_DIR/fail_Org_other"
+run_pass
+check "resolvable again: its PRs are processed" \
+  "NOTIFIED Org/other#5 resume bbbb2222 a review requesting changes from samrent-infuse" "$(out)"
+check "resolvable again: logged once, and unreachable.tsv no longer has it" "1|" \
+  "$(grep -c 'the repository Org/other is reachable again' "$STATE/poll.log")|$(cut -f1 "$D/unreachable.tsv")"
 
 fresh
 enrol
@@ -442,17 +454,33 @@ check "gh pr list fails for a while: its watch rows are kept" "5 6" \
   "$(awk -F'\t' '$1 == "Org/other" { print $2 }' "$D/watch.tsv" | sort | tr '\n' ' ' | sed 's/ $//')"
 check "gh pr list fails for a while: logged" "1" "$(grep -c 'listing the open PRs of Org/other failed' "$STATE/poll.log")"
 
-# #10 comes before #11 in watch.tsv.
+# #10 comes before #11 in watch.tsv. gh pr view on a missing number says
+# "Could not resolve to a PullRequest" (checked against real gh); "no pull
+# requests found" is taken the same way.
+for answer_file in nopr_10 missing_10; do
+  fresh
+  enrol
+  open_prs Org/repo "11 $T2" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+  touch "$STUB_DIR/$answer_file"
+  answer comments_11.json "$(comment samrent-infuse "$F1")"
+  run_pass
+  check "$answer_file: a PR GitHub cannot find does not hold up the next one" \
+    "NOTIFIED Org/repo#11 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
+  check "$answer_file: a PR GitHub cannot find is dropped" "|1" \
+    "$(row watch.tsv Org/repo 10)|$(row closed.txt Org/repo 10 | wc -l | tr -d ' ')"
+  check "$answer_file: a PR GitHub cannot find is logged once" "1" "$(grep -c 'Org/repo#10 does not exist' "$STATE/poll.log")"
+done
+
 fresh
 enrol
 open_prs Org/repo "11 $T2" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
-touch "$STUB_DIR/missing_10"
+touch "$STUB_DIR/hidden_10"
 answer comments_11.json "$(comment samrent-infuse "$F1")"
 run_pass
-check "a PR GitHub cannot find does not hold up the next one" \
-  "NOTIFIED Org/repo#11 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
-check "a PR GitHub cannot find is dropped" "|1" "$(row watch.tsv Org/repo 10)|$(row closed.txt Org/repo 10 | wc -l | tr -d ' ')"
-check "a PR GitHub cannot find is logged once" "1" "$(grep -c 'Org/repo#10 does not exist' "$STATE/poll.log")"
+check "gh pr view cannot resolve the repository: the PR is kept, not closed" "1|" \
+  "$(row watch.tsv Org/repo 10 | wc -l | tr -d ' ')|$(row closed.txt Org/repo 10)"
+check "gh pr view cannot resolve the repository: the repository waits, marked and logged once" "|Org/repo|1" \
+  "$(out)|$(cut -f1 "$D/unreachable.tsv")|$(grep -c 'cannot resolve the repository Org/repo' "$STATE/poll.log")"
 
 fresh
 enrol

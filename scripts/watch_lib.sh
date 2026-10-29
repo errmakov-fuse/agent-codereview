@@ -11,6 +11,9 @@
 #   pending.tsv   repo, PR number, session id, attempts, summary (a message not yet delivered)
 #   sent.log      epoch seconds, repo, PR number, session id, delivery, result, summary
 #   closed.txt    repo, PR number, closed (ISO)
+#   unreachable.tsv  repo, first failure (ISO): a repository GitHub would not
+#                 resolve (deleted, or hidden from the current gh account), kept
+#                 until a pass reads it again, so the outage is logged once
 #   scan.tsv      session id, bytes read (written by session_prs.js, not by this file)
 #   lock/         directory holding a pid file: the pass that is running
 #
@@ -24,6 +27,7 @@ WATCH_SEEN="$PR_UPDATES_DIR/seen.tsv"
 WATCH_PENDING="$PR_UPDATES_DIR/pending.tsv"
 WATCH_SENT="$PR_UPDATES_DIR/sent.log"
 WATCH_CLOSED="$PR_UPDATES_DIR/closed.txt"
+WATCH_UNREACHABLE="$PR_UPDATES_DIR/unreachable.tsv"
 WATCH_LOCK="$PR_UPDATES_DIR/lock"
 SECONDS_PER_DAY=86400
 
@@ -223,4 +227,24 @@ closed_has() {
 closed_add() {
   closed_has "$1" "$2" && return 0
   printf '%s\t%s\t%s\n' "$1" "$2" "$(date -u +%FT%TZ)" >>"$WATCH_CLOSED"
+}
+
+# --- Unreachable repositories ------------------------------------------------
+
+unreachable_has() {
+  [ -f "$WATCH_UNREACHABLE" ] || return 1
+  awk -F'\t' -v repo="$1" '$1 == repo { found = 1 } END { exit !found }' "$WATCH_UNREACHABLE"
+}
+
+# Marks a repository unreachable; true only when it was not marked yet.
+unreachable_mark() {
+  unreachable_has "$1" && return 1
+  printf '%s\t%s\n' "$1" "$(date -u +%FT%TZ)" >>"$WATCH_UNREACHABLE"
+}
+
+# Clears the mark; true only when there was one.
+unreachable_clear() {
+  unreachable_has "$1" || return 1
+  awk -F'\t' -v repo="$1" '$1 != repo' "$WATCH_UNREACHABLE" >"$WATCH_UNREACHABLE.tmp" &&
+    mv "$WATCH_UNREACHABLE.tmp" "$WATCH_UNREACHABLE"
 }

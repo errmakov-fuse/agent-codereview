@@ -138,4 +138,14 @@ closed_has Org/r 10; check "closed_has does not match a number prefix" "1" "$?"
 closed_add Org/r 1
 check "closed_add twice keeps one row" "1" "$(wc -l <"$D/closed.txt" | tr -d ' ')"
 
+# --- Unreachable repositories ----------------------------------------------------
+unreachable_clear Org/r; check "unreachable_clear with no mark is false" "1" "$?"
+unreachable_mark Org/r; check "the first unreachable_mark is true" "0" "$?"
+unreachable_mark Org/r; check "a second unreachable_mark is false" "1" "$?"
+unreachable_mark Org/s
+check "a mark is the repo and an ISO time, once per repo" "1 1" \
+  "$(grep -c "^Org/r$T" "$D/unreachable.tsv") $(grep -cE "^Org/s$T[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\$" "$D/unreachable.tsv")"
+unreachable_clear Org/r; check "unreachable_clear of a mark is true" "0" "$?"
+check "unreachable_clear leaves other repositories" "Org/s" "$(cut -f1 "$D/unreachable.tsv")"
+
 exit "$failed"
