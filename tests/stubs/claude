@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# A stand-in for claude, for tests/watch_pass.sh. Answers two calls:
+#
+#   claude agents --json --all       prints $STUB_DIR/agents.json; fails when
+#                                    $STUB_DIR/fail_agents exists
+#   claude --bg --resume <id> <msg>  appends "resume<TAB><id><TAB><msg>" to
+#                                    $STUB_DIR/calls.log and the working
+#                                    directory to $STUB_DIR/resume_cwd, prints a
+#                                    short id; fails when $STUB_DIR/fail_resume
+#                                    exists
+#
+# A resume with any other number of arguments is recorded as "resume-argc <n>",
+# so a message split into several arguments shows.
+
+if [ "$*" = "agents --json --all" ]; then
+  echo "claude $*" >>"$STUB_DIR/calls.log"
+  if [ -e "$STUB_DIR/fail_agents" ]; then
+    echo "error: could not list the agents" >&2
+    exit 1
+  fi
+  cat "$STUB_DIR/agents.json"
+  exit 0
+fi
+
+if [ "$1 $2" = "--bg --resume" ]; then
+  if [ "$#" -ne 4 ]; then
+    echo "resume-argc $#" >>"$STUB_DIR/calls.log"
+    exit 1
+  fi
+  printf 'resume\t%s\t%s\n' "$3" "$4" >>"$STUB_DIR/calls.log"
+  pwd >>"$STUB_DIR/resume_cwd"
+  if [ -e "$STUB_DIR/fail_resume" ]; then
+    echo "error: no conversation found with session ID $3" >&2
+    exit 1
+  fi
+  echo "note: woke session ${3:0:8} with its saved options" >&2
+  echo "abcd1234"
+  exit 0
+fi
+
+echo "claude $*" >>"$STUB_DIR/calls.log"
+echo "stub claude: unexpected call: claude $*" >&2
+exit 1
