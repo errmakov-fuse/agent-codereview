@@ -110,20 +110,20 @@ A teammate answers a PR hours after the Claude Code session that opened it went 
 
 | Source | Meaning |
 |---|---|
-| `created` | The session ran `gh pr create`: a tool result that is only the PR's URL. |
+| `created` | The session ran `gh pr create`: a tool result of at most three lines whose last line is the PR's URL. |
 | `linked` | Claude Code's own PR link record, written whenever a PR URL goes by in the session. The session saw the PR; it may not have made it. |
 | `mentioned` | A PR URL you typed to the session. |
 
 When several sessions name one PR, one gets the message: the best source wins, then a live session over a retired one, then the one started last.
 
-**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (by default `MY_LOGINS` plus `dependabot[bot]`, so a session's own replies never wake it). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when you or the session did the merge or close. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
+**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (by default `MY_LOGINS` plus `dependabot[bot]`, so a session's own replies never wake it). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when the merger or closer is one of `MY_LOGINS`. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
 
 **How a session is told.**
 
-- A live session gets the message in its inbox. Claude Code may hold it there as a peer message with a "Deliver" prompt until you approve it in the session. A session that bypasses permission prompts does. To make delivery automatic, set `"crossSessionInbound": "accept"` in `~/.claude/settings.json`. The watcher never changes your settings, and it cannot tell a held message from a delivered one, so the notification is how you find out.
-- A retired background session is resumed with `claude --bg --resume <session id> "<message>"`, run in the folder the session ran in, and starts on the update at once. It then stays running until Claude Code retires it again, about an hour idle. A retired session whose folder is gone is never resumed; you get a notification and carry the message by hand. Only background sessions are ever resumed.
+- A live session gets the message in its inbox. Claude Code may hold it there as a peer message with a "Deliver" prompt until you approve it in the session. In the test on this machine, a session running with permission prompts bypassed held the message because its sender did not attest a permission mode, and an external script has no way to attest one. Claude Code's cross-session messaging documentation says that `"crossSessionInbound": "accept"` in `~/.claude/settings.json` makes such delivery automatic; that was not tested here. The watcher never changes your settings, and it cannot tell a held message from a delivered one, so the notification is how you find out.
+- A retired background session is resumed with `claude --bg --resume <session id> "<message>"`, run in the folder the session ran in, and starts on the update at once. It then stays running until Claude Code retires it again, about an hour idle on this machine. A retired session whose folder is gone is never resumed; you get a notification and carry the message by hand. Only background sessions are ever resumed.
 
-**Cost.** A live session pays nothing for the message. A resume is expensive: it re-reads the session's whole context, often over 100K tokens, on the session's own model (often opus), and then works with nobody watching. `PR_UPDATE_MAX_RESUMES_PER_PASS` and `PR_UPDATE_MAX_PER_PR_PER_DAY` bound how many wake-ups there are, not what each one costs. With `PR_UPDATE_RESUME_RETIRED=false` nothing is resumed: the update of a retired session waits, silently, until that session is live again.
+**Cost.** A message to a live session costs no resume; the session still spends tokens acting on it. A resume is expensive: it re-reads the session's whole context on the session's own model, and then works with nobody watching. On this machine the sessions run on opus and hold 100K tokens and more. `PR_UPDATE_MAX_RESUMES_PER_PASS` and `PR_UPDATE_MAX_PER_PR_PER_DAY` bound how many wake-ups there are, not what each one costs. With `PR_UPDATE_RESUME_RETIRED=false` nothing is resumed: the update of a retired session waits, silently, until that session is live again.
 
 **Notifications.** A message sent gives "PR #n: update", with the summary and the session. A message that could not be sent is tried once more on the next pass, then dropped with "carry the message by hand". A PR over its daily cap gives "update not forwarded". If the sessions cannot be listed you get "PR watcher cannot list sessions"; see `state/poll.log`. The events are `NOTIFIED`, `NOT_DELIVERED`, `WATCH_GAVE_UP`, `CAPPED_UPDATES` and `WATCH_FAILED`, and are also in `state/events.log`.
 
@@ -135,7 +135,7 @@ bash scripts/watch_pr_updates.sh --backfill --dry-run  # the same, counting what
 bash scripts/watch_pr_updates.sh --backfill            # send it
 ```
 
-`--dry-run` works on a throwaway copy of the ledger and prints each event as `DRY_RUN <event>`. `--backfill` makes the comments and reviews already on a newly seen PR count as new, instead of enrolling it silently. Run it once after install to hand your sessions the reviews that are waiting; the caps apply. It does not touch a PR seen before.
+`--dry-run` works on a throwaway copy of the ledger and prints each event as `DRY_RUN <event>`. A first dry run prints nothing, because every PR is enrolled silently; `--backfill --dry-run` shows what the waiting reviews would send. `--backfill` makes the comments and reviews already on a newly seen PR count as new, instead of enrolling it silently. Run it once after install to hand your sessions the reviews that are waiting; the caps apply. It does not touch a PR seen before.
 
 The ledger is `state/pr_updates/`: which session owns which PR, what was handled, sent and is waiting. `AGENT.md` lists its files.
 
@@ -170,6 +170,6 @@ Then `/irl <quote>` in any session, or ask to see something "in real life".
 - New commits on a PR you approved are not re-reviewed while the approval stands and nobody re-requests you.
 - The watcher reads Claude Code's internals: the session registry, job state, transcript records and the inbox. None is a stable interface, and a Claude Code update can break any of them. When the sessions cannot be listed you get a notification; other breakage may only show as updates that do not arrive.
 - The watcher resumes only background sessions. A closed interactive session is not watched.
-- Any tool result that is only a PR URL counts as the session creating that PR, so a session that merely printed one can own it.
+- Any tool result of at most three lines whose last line is a PR URL counts as the session creating that PR, so a session that merely printed one can own it.
 - Per PR the watcher reads the first 100 comments, review comments, reviews and timeline events, and per repository the first 100 open PRs. A PR beyond that is not checked for updates.
 - Like the reviewer, the watcher runs only while the scheduled task does.
