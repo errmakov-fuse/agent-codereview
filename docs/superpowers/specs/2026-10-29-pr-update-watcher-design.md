@@ -155,3 +155,29 @@ What the spike finds goes into the plan; if (1) or (2) does not behave as descri
 - **Unattended spend.** Each resumed session re-reads its full context and then works, on its own model (opus for most of these sessions), with nobody watching. The per-PR and per-pass caps bound the number of wake-ups, not what a wake-up costs. The reviewer's `MAX_RUN_USD` cannot apply: the session is the owner's, not a lean run.
 - **Resumed sessions keep running.** A `--bg --resume` session stays alive until the daemon retires it again, so a burst of comments on several PRs leaves several sessions awake for an hour each. Harmless in tokens (an idle session costs nothing), noticeable in the agents view.
 - **Two writers.** If the owner is typing in a session while the watcher posts to its inbox, both turns interleave into one transcript. The docs allow it; it may surprise.
+
+## Spike findings
+
+Run on 2026-10-29 against Claude Code 2.1.312 on this machine, with a throwaway haiku background session `watcher-spike` (short id `c6ac0028`, started in this worktree). The session was removed afterwards.
+
+**1. Inbox frame: reaches the session but is held, not delivered (contradicts "How a message is delivered", point 1).**
+
+- `claude --bg --name watcher-spike --model haiku "<test-target prompt>"` listed `watcher-spike` with a pid. A script following the recipe (connect to `messagingSocketPath`, write the auth line with `peerToken`, then `{"type":"user","message":{"role":"user","content":"spike one"}}`, end) connected and closed without error.
+- `claude logs watcher-spike` showed no `RECEIVED: spike one`. Instead the session printed: `Held peer message - from an unidentified session; preview: «spike one» - not delivered to Claude (1 held). The sender did not attest its permission mode and this session bypasses prompts. Review it below, or set "crossSessionInbound" to "accept".` and a dialog "Another Claude session sent a message ... Deliver this message to Claude". The registry entry went to `status: waiting`, `waitingFor: permission prompt`.
+- So the label is "peer message, held for approval". Cause: Claude Code 2.1.312 has a `crossSessionInbound` setting (`accept`, `hold`, `refuse`). A session that bypasses permission prompts (these background sessions do) holds a peer message whose sender did not attest a permission mode (`no-mode-asserted`); a sender of a different mode class is held as `mode-mismatch`. The binary's text says the sender's mode is declared only by the host that injects on local stdin, not on the socket lane.
+- One variant of the same mechanism: the user frame with extra `fromMode:"bypass"` and `from` fields was held the same way (still "from an unidentified session"). No way to attest a mode over the socket was found.
+- A held message stays held until someone approves it in the session or `crossSessionInbound` is `"accept"`; it expires when the session stops. The setting was not changed in this spike (it lives in the owner's user settings; managed or repo settings can also pin it).
+- Consequence for the plan: unless the owner sets `crossSessionInbound` to `accept` in user settings, the inbox sender in Task 4 does not deliver to a bypass-mode session. Task 4 therefore either (a) documents and checks that setting, or (b) switches to `claude -p --resume <session id> "<message>"` run in the background, as the brief provides. The socket gives the sender no sign that a message was held, so a pure inbox send cannot report success. The controller decides before Task 4.
+
+**2. `claude --bg --resume <full session id> "spike two"` on a stopped background session: works, keeps the id, no copy.**
+
+- `claude stop watcher-spike` printed `No job matching 'watcher-spike'` while the session was in `waiting` (permission prompt); `claude stop c6ac0028` printed `stopped c6ac0028`. After 6 seconds `claude agents --json --all` showed the entry with no `pid`.
+- `claude --bg --resume c6ac0028-711d-416b-ae50-d53ee27a562a "spike two"` printed `note: woke session c6ac0028 with its saved options (--name, --model).` and `backgrounded · c6ac0028 · watcher-spike`. This `note:` is not about a copy. Same short id, same `sessionId`, same name, new pid.
+- `claude logs watcher-spike` after 30 seconds: `spike two` appeared as a plain user turn (`❯ spike two`) with the reply `RECEIVED: spike two`. The earlier held `spike one` was never delivered. The turn took about 9 seconds on haiku with a tiny context; the cost for a real 150K-token session was not measured.
+- Consequence: Task 6 records delivery as `resume`, not `resume-copy`; no plan change.
+
+**Other observations**
+
+- `claude stop` and `claude rm` by name answered `No job matching` for a session with a pending permission prompt; by short id both worked. Task 4 and Task 6 should address sessions by short id.
+- `claude logs` prints raw terminal output with ANSI escapes; strip them before matching text.
+- The label of an accepted inbox message was not observed, since none was accepted.
