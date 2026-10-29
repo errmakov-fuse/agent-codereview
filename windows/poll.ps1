@@ -1,11 +1,24 @@
-# Runs one pass of scripts/poll.sh with Git Bash and turns its events into
-# Windows notifications. Windows Task Scheduler runs this every POLL_SECONDS
-# (see install.ps1); several passes may overlap while reviews run.
+# Runs one pass of scripts/watch_pr_updates.sh, then one of scripts/poll.sh,
+# with Git Bash and turns their events into Windows notifications. Windows Task
+# Scheduler runs this every POLL_SECONDS (see install.ps1); several passes may
+# overlap while reviews run. The watcher goes first, so a pass waiting on an
+# hour-long review never delays it.
+#
+# The reviewer's events:
 #
 #   STARTED <key>                     "Reviewing PR #n"
 #   POSTED <key> <verdict> <url>      "PR #n approved" / "changes requested" / "commented"
 #   NOT_POSTED / FAILED / GAVE_UP     "PR #n not reviewed" with the reason
 #   REQUESTED <reviewer> #<n>         no notification, only the log
+#
+# The PR update watcher's events:
+#
+#   NOTIFIED <repo>#<n> <inbox|resume> <id> <summary>   "PR #n: update"
+#   NOT_DELIVERED <repo>#<n> <id> <why>                 "PR #n: session <id> not reached"
+#   WATCH_GAVE_UP <repo>#<n> <id>                       "PR #n: carry the message by hand"
+#   CAPPED_UPDATES <repo>#<n> <count>                   "PR #n: update not forwarded"
+#   WATCH_FAILED <why>                                  "PR watcher cannot list sessions"
+#   DRY_RUN <what>                                      no notification, only the log
 #
 # Every event is also appended to state\events.log.
 #
@@ -65,6 +78,11 @@ function Format-Key([string]$key) {
     return "#$key"
 }
 
+# "Org/repo#10" -> "#10"
+function Format-PrKey([string]$key) {
+    return '#' + ($key -replace '^.*#', '')
+}
+
 $bash = $config['GIT_BASH']
 if (-not $bash -or -not (Test-Path -LiteralPath $bash)) {
     Write-Event "POLL_FAILED Git Bash not found at '$bash' (GIT_BASH in config.env)"
@@ -72,10 +90,32 @@ if (-not $bash -or -not (Test-Path -LiteralPath $bash)) {
     exit 1
 }
 $script = (Join-Path $Root 'scripts\poll.sh') -replace '\\', '/'
+$watchScript = (Join-Path $Root 'scripts\watch_pr_updates.sh') -replace '\\', '/'
 
-# Native stderr would become error records in Windows PowerShell; poll.sh logs its
-# own errors to state\poll.log, so it is dropped here.
+# Native stderr would become error records in Windows PowerShell; poll.sh and the
+# watcher log their own errors to state\poll.log, so it is dropped here.
 $ErrorActionPreference = 'Continue'
+
+# The watcher runs first. Its failure (exit 1) is reported by WATCH_FAILED and
+# must not stop the reviewer's pass below.
+& $bash $watchScript 2>$null | ForEach-Object {
+    $line = "$_".Trim()
+    if (-not $line) { return }
+    Write-Event $line
+    $words = $line -split ' ', 5
+    $pr = Format-PrKey $words[1]
+    switch ($words[0]) {
+        'NOTIFIED' {
+            $did = if ($words[2] -eq 'resume') { 'Resumed' } else { 'Sent to' }
+            Show-Toast "PR ${pr}: update" "$($words[4]). $did session $($words[3])."
+        }
+        'NOT_DELIVERED' { Show-Toast "PR ${pr}: session $($words[2]) not reached" "$(($words | Select-Object -Skip 3) -join ' '). Tried again next pass." }
+        'WATCH_GAVE_UP' { Show-Toast "PR ${pr}: carry the message by hand" "Session $($words[2]) could not be reached twice." }
+        'CAPPED_UPDATES' { Show-Toast "PR ${pr}: update not forwarded" "$($words[2]) messages today already (PR_UPDATE_MAX_PER_PR_PER_DAY)." }
+        'WATCH_FAILED' { Show-Toast 'PR watcher cannot list sessions' 'See state\poll.log.' }
+    }
+}
+
 & $bash $script 2>$null | ForEach-Object {
     $line = "$_".Trim()
     if (-not $line) { return }
