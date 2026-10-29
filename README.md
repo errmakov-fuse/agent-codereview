@@ -120,8 +120,16 @@ When several sessions name one PR, one gets the message: the best source wins, t
 
 **How a session is told.**
 
-- A live session gets the message in its inbox. Claude Code may hold it there as a peer message with a "Deliver" prompt until you approve it in the session. In the test on this machine, a session running with permission prompts bypassed held the message because its sender did not attest a permission mode, and an external script has no way to attest one. Claude Code's cross-session messaging documentation says that `"crossSessionInbound": "accept"` in `~/.claude/settings.json` makes such delivery automatic; that was not tested here. The watcher never changes your settings, and it cannot tell a held message from a delivered one, so the notification is how you find out.
+- A live session gets the message in its inbox. By default Claude Code holds it there as a peer message with a "Deliver" prompt until you approve it in the session: a session running with permission prompts bypassed holds a message whose sender did not attest a permission mode, and an external script has no way to attest one. This happened in the test and in the first live run on this machine. To have it delivered without the prompt, see "Deliver to live sessions without a click" below. The watcher never changes your settings, and it cannot tell a held message from a delivered one, so the notification is how you find out.
 - A retired background session is resumed with `claude --bg --resume <session id> "<message>"`, run in the folder the session ran in, and starts on the update at once. It then stays running until Claude Code retires it again, about an hour idle on this machine. A retired session whose folder is gone is never resumed; you get a notification and carry the message by hand. Only background sessions are ever resumed.
+
+**Deliver to live sessions without a click.** Add this top-level line to `~/.claude/settings.json`, your user settings, not this repository's:
+
+```json
+"crossSessionInbound": "accept"
+```
+
+A live session then hands the watcher's message to Claude at once, with no "Deliver" prompt. The setting is Claude Code's own and covers every peer message a session receives, not only the watcher's: messages from your other Claude sessions also arrive unreviewed. Only a process running as you can reach a session's inbox, since it needs the token under `~/.claude/sessions/`. A session started after the change uses it; one already running may need a restart. To go back to the prompt, set it to `"hold"` or remove the line. This machine runs with it since 2026-10-29.
 
 **Cost.** A message to a live session costs no resume; the session still spends tokens acting on it. A resume is expensive: it re-reads the session's whole context on the session's own model, and then works with nobody watching. On this machine the sessions run on opus and hold 100K tokens and more. `PR_UPDATE_MAX_RESUMES_PER_PASS` and `PR_UPDATE_MAX_PER_PR_PER_DAY` bound how many wake-ups there are, not what each one costs. With `PR_UPDATE_RESUME_RETIRED=false` nothing is resumed: the update of a retired session waits until that session is live again, and you get one "update waiting" notification for it.
 
