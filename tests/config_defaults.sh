@@ -15,6 +15,8 @@ trap 'rm -rf "$TMP"' EXIT
 grep -v '^PR_UPDATE_' "$CONFIG_SRC" >"$TMP/defaults.env"
 # The same, plus a number that is not one.
 { cat "$TMP/defaults.env"; echo 'PR_UPDATE_MAX_PER_PR_PER_DAY=abc'; } >"$TMP/bad.env"
+# The same, with extra logins to ignore: MY_LOGINS must stay in the list.
+{ cat "$TMP/defaults.env"; echo 'PR_UPDATE_IGNORE_LOGINS="renovate[bot] ci-bot"'; } >"$TMP/ignore.env"
 
 # Runs load_config in a subshell against the given config and state dir, then
 # prints what it set. The sourced config is the only place MY_LOGINS comes from.
@@ -62,6 +64,10 @@ PR_UPDATE_RESUME_RETIRED = true
 
 check "the settings as shipped in config.env load as the defaults do" \
   "$(loaded "$TMP/defaults.env" "$TMP/state2")" "$(loaded "$CONFIG_SRC" "$TMP/state3")"
+
+check "extra ignored logins are added to MY_LOGINS, not put in their place" \
+  "PR_UPDATE_IGNORE_LOGINS = \"$my_logins renovate[bot] ci-bot\"" \
+  "$(loaded "$TMP/ignore.env" "$TMP/state5" | grep "^PR_UPDATE_IGNORE_LOGINS")"
 
 check "a non-numeric PR_UPDATE_MAX_PER_PR_PER_DAY is refused" \
   "PR_UPDATE_MAX_PER_PR_PER_DAY must be a number

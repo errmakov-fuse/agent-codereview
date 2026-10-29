@@ -73,10 +73,10 @@ To watch a PR the watcher forgot (a row in `closed.txt`): delete that row, delet
 | `state/pr_updates/watch.tsv` | Which session watches which PR: repo, number, session id, source (`created`, `linked`, `mentioned`), first seen. Rows are added as new transcript lines are scanned (`scan.tsv` remembers how far each was read) and dropped when their session is gone or the PR is forgotten. |
 | `state/pr_updates/seen.tsv` | Per PR: the `updatedAt` last looked at and the newest comment or review already handled. No row means the PR is enrolled silently. |
 | `state/pr_updates/sent.log` | One line per message: time, repo, number, session id, `inbox` or `resume`, `ok` or `failed`, summary. `ok` for an inbox message means written, not delivered. The daily cap counts only the `ok` rows of the last 24 hours. |
-| `state/pr_updates/pending.tsv` | Updates not delivered yet: waiting for a resume slot, or failed once. Tried every pass. |
+| `state/pr_updates/pending.tsv` | Updates not delivered yet: waiting for a resume slot, for a retired session while `PR_UPDATE_RESUME_RETIRED` is off (announced once by a `WAITING` event), or failed once. Tried every pass. |
 | `state/pr_updates/closed.txt` | PRs the watcher has forgotten: merged, closed, or gone. |
 | `state/pr_updates/sessions.tsv` | The sessions of the last pass: short id, session id, `live` or `retired`, pid, start time, folder, name. |
-| `state/pr_updates/scan.tsv` | Per session: how many bytes of its transcript were read. Delete a row to read that transcript again. |
+| `state/pr_updates/scan.tsv` | Per session: how many bytes of its transcript were read. Delete a row to read that transcript again; the watcher drops the row itself when the session leaves the listing, so a session that comes back is read again. |
 | `state/pr_updates/unreachable.tsv` | Repositories GitHub would not resolve (see the traps). Cleared when one resolves again. |
 | `state/pr_updates/lock/` | Present while a watcher pass runs; a lock whose process is gone is taken over. |
 | `state/last_poll` | When the last pass listed the PRs. Older than ten minutes while you are logged on means the scheduled task is not running. |

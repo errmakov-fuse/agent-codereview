@@ -90,10 +90,17 @@ check "watch_owner: both retired, the later start wins" "EEEE" "$(watch_owner Or
 check "watch_owner of an unwatched PR is empty" "" "$(watch_owner Org/r 99)"
 
 printf 'SESSION\ta1\tAAAA\tlive\t123\t200\t/c/my repo\tfirst name\n' | sessions_save
+printf 'AAAA\t500\nBBBB\t600\nCCCC\t700\nDDDD\t800\nZZZZ\t900\n' >"$D/scan.tsv"
 watch_drop_gone
 check "watch_drop_gone keeps only rows of known sessions" "Org/r${T}1
 Org/r${T}3
 Org/r${T}4" "$(watch_prs)"
+check "watch_drop_gone drops the scan rows of the sessions it dropped, and keeps the rest" "AAAA${T}500
+ZZZZ${T}900" "$(cat "$D/scan.tsv")"
+check "watch_drop_gone logs one line with the rows per session" "1 1 1" \
+  "$(grep -c 'sessions no longer listed' "$LOG") $(grep -c 'BBBB (4)' "$LOG") $(grep -c 'DDDD (1)' "$LOG")"
+watch_drop_gone
+check "watch_drop_gone with nothing to drop logs nothing more" "1" "$(grep -c 'sessions no longer listed' "$LOG")"
 watch_drop_pr Org/r 1
 check "watch_drop_pr removes every row of that PR" "Org/r${T}3
 Org/r${T}4" "$(watch_prs)"

@@ -93,7 +93,7 @@ A delivery that fails prints a `NOT_DELIVERED` event, which `poll.ps1` turns int
 
 | Setting | Default | Effect |
 |---|---|---|
-| `PR_UPDATE_IGNORE_LOGINS` | `$MY_LOGINS` plus `dependabot[bot]` | Updates from these logins are not updates. |
+| `PR_UPDATE_IGNORE_LOGINS` | `dependabot[bot]` | Updates from these logins are not updates. `$MY_LOGINS` are always ignored on top of the list, whatever it holds. |
 | `PR_UPDATE_MAX_PER_PR_PER_DAY` | 6 | After this many messages on one PR in 24 hours, further updates are only toasted. Protects against a comment thread that goes back and forth. |
 | `PR_UPDATE_MAX_RESUMES_PER_PASS` | 2 | At most this many retired sessions are resumed in one pass. The rest wait for the next pass. |
 | `PR_UPDATE_RESUME_RETIRED` | `true` | `false` turns the retired case into toast plus the message sent to the session's inbox when it is next alive (held there until the owner delivers it, unless `crossSessionInbound` is `accept`). |
@@ -175,6 +175,8 @@ Run on 2026-10-29 against Claude Code 2.1.312 on this machine, with a throwaway 
 - Consequence: Task 6 records delivery as `resume`, not `resume-copy`; no plan change.
 
 **Other observations**
+
+- Whether `claude -p` runs (the reviewer's own) appear in `claude agents --json --all` was not verified, so `claude_lean.sh` names them `agent-codereview-review` and the watcher drops sessions of that name.
 
 - `claude stop` and `claude rm` by name answered `No job matching` for a session with a pending permission prompt; by short id both worked. Task 4 and Task 6 should address sessions by short id.
 - `claude logs` prints raw terminal output with ANSI escapes; strip them before matching text.

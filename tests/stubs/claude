@@ -7,7 +7,8 @@
 #                                    $STUB_DIR/calls.log and the working
 #                                    directory to $STUB_DIR/resume_cwd, prints a
 #                                    short id; fails when $STUB_DIR/fail_resume
-#                                    exists
+#                                    exists, and says it started a copy when
+#                                    $STUB_DIR/copy_resume exists
 #
 # A resume with any other number of arguments is recorded as "resume-argc <n>",
 # so a message split into several arguments shows.
@@ -32,6 +33,11 @@ if [ "$1 $2" = "--bg --resume" ]; then
   if [ -e "$STUB_DIR/fail_resume" ]; then
     echo "error: no conversation found with session ID $3" >&2
     exit 1
+  fi
+  if [ -e "$STUB_DIR/copy_resume" ]; then
+    echo "note: started a copy of session ${3:0:8}; the original is still running" >&2
+    echo "abcd1234"
+    exit 0
   fi
   echo "note: woke session ${3:0:8} with its saved options" >&2
   echo "abcd1234"

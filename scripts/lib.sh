@@ -21,6 +21,9 @@ CAPPED="$STATE_DIR/capped.txt"
 LAST_POLL="$STATE_DIR/last_poll"
 PR_UPDATES_DIR="$STATE_DIR/pr_updates"
 MAX_OPEN_PRS=100
+# The name claude_lean.sh gives every review run, by which the PR update watcher
+# knows them and never watches them.
+REVIEW_SESSION_NAME=agent-codereview-review
 
 load_config() {
   if [ ! -f "$CONFIG" ]; then
@@ -40,7 +43,9 @@ load_config() {
   done
   # The PR update settings may be left out of config.env.
   : "${PR_UPDATE_ENABLED:=true}"
-  : "${PR_UPDATE_IGNORE_LOGINS:=$MY_LOGINS dependabot[bot]}"
+  # MY_LOGINS are always ignored, whatever the setting holds: a session that
+  # comments on its own PR must not be woken by its own words, again and again.
+  PR_UPDATE_IGNORE_LOGINS="$MY_LOGINS ${PR_UPDATE_IGNORE_LOGINS:-dependabot[bot]}"
   : "${PR_UPDATE_MAX_PER_PR_PER_DAY:=6}"
   : "${PR_UPDATE_MAX_RESUMES_PER_PASS:=2}"
   : "${PR_UPDATE_RESUME_RETIRED:=true}"

@@ -63,6 +63,19 @@ sed -i "s|@HOME@|$HOME_DIR|" "$WORK/home/jobs/bbbb2222/state.json"
 # bbbb2222 also owns Org/other#6.
 echo '{"type":"pr-link","sessionId":"'"$BBBB"'","prNumber":6,"prUrl":"https://github.com/Org/other/pull/6","prRepository":"Org/other","timestamp":"2026-01-01T00:00:02Z"}' \
   >>"$WORK/home/elsewhere/bbbb.jsonl"
+# ffff6666 is one of the reviewer's own runs (named as claude_lean.sh names
+# them), live, and its transcript says it created Org/repo#40. It is never watched.
+FFFF=ffff6666-0000-4000-8000-000000000006
+mkdir -p "$WORK/home/projects/C--w-review"
+echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":[{"type":"text","text":"https://github.com/Org/repo/pull/40"}]}]}}' \
+  >"$WORK/home/projects/C--w-review/$FFFF.jsonl"
+node -e '
+  const [file, sid] = process.argv.slice(1);
+  const fs = require("fs");
+  const agents = JSON.parse(fs.readFileSync(file, "utf8"));
+  agents.push({ pid: 600, id: "ffff6666", cwd: "C:\\w\\review", kind: "interactive", startedAt: 1700000005000, sessionId: sid, name: "agent-codereview-review" });
+  fs.writeFileSync(file, JSON.stringify(agents));
+' "$HOME_DIR/agents.json" "$FFFF"
 mkdir "$WORK/home/sessions"
 # The folder bbbb2222 ran in; the fixture's C:\w\other does not exist.
 mkdir "$WORK/other"
@@ -192,6 +205,9 @@ check "first pass: one gh pr list per repository" "1 1" \
   "$(count_calls '^gh pr list --repo Org/repo ') $(count_calls '^gh pr list --repo Org/other ')"
 check "first pass: no gh api call" "0" "$(count_calls '^gh api')"
 check "first pass: no gh pr view (every watched PR is open)" "0" "$(count_calls '^gh pr view')"
+check "first pass: the reviewer's own run is not in sessions.tsv" "" "$(grep ffff6666 "$D/sessions.tsv")"
+check "first pass: the PR the reviewer's run created is not watched, nor forgotten" "|" \
+  "$(grep "$FFFF" "$D/watch.tsv")|$(row closed.txt Org/repo 40)"
 
 rm -f "$STUB_DIR/calls.log"
 before=$(received_lines)
@@ -286,9 +302,55 @@ for setting in PR_UPDATE_RESUME_RETIRED=false PR_UPDATE_MAX_RESUMES_PER_PASS=0; 
   answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
   run_pass
   check "$setting: no resume call" "" "$(resume_lines)"
-  check "$setting: no event" "" "$(out)"
+  if [ "$setting" = PR_UPDATE_RESUME_RETIRED=false ]; then
+    check "$setting: exactly one WAITING line" \
+      "WAITING Org/other#5 bbbb2222 a review requesting changes from samrent-infuse" "$(out)"
+  else
+    check "$setting: no event (the next pass handles it)" "" "$(out)"
+  fi
   check "$setting: the update waits in pending.tsv" "1" "$(row pending.tsv Org/other 5 | wc -l | tr -d ' ')"
+  run_pass
+  check "$setting: the next pass says nothing, the update still waits" "|1|" \
+    "$(out)|$(row pending.tsv Org/other 5 | wc -l | tr -d ' ')|$(resume_lines)"
 done
+fresh PR_UPDATE_RESUME_RETIRED=false
+enrol
+other_open "5 $T2" "6 $T1"
+answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
+run_pass
+other_open "5 $T3" "6 $T1"
+answer comments_5.json "$(comment samrent-infuse "$F2")"
+run_pass
+check "PR_UPDATE_RESUME_RETIRED=false: a further update while one waits is a new WAITING line, with both" \
+  "WAITING Org/other#5 bbbb2222 a review requesting changes from samrent-infuse; then 1 comment from samrent-infuse" "$(out)"
+
+# The listing says bbbb2222 is retired, but by the time its update goes out it
+# has a registry entry: it was reopened since. A resume would start a copy.
+fresh
+enrol
+node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ pid: 200, sessionId: process.argv[2] }))' \
+  "$HOME_DIR/sessions/200.json" "$BBBB"
+other_open "5 $T2" "6 $T1"
+answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
+run_pass
+rm -f "$WORK/home/sessions/200.json"
+check "retired owner alive since the listing: not resumed" "" "$(resume_lines)"
+check "retired owner alive since the listing: no event" "" "$(out)"
+check "retired owner alive since the listing: pending, no attempt counted" "0" "$(row pending.tsv Org/other 5 | cut -f4)"
+check "retired owner alive since the listing: logged" "1" \
+  "$(grep -c "session $BBBB came alive since the listing; waiting" "$STATE/poll.log")"
+
+fresh
+enrol
+touch "$STUB_DIR/copy_resume"
+other_open "5 $T2" "6 $T1"
+answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
+run_pass
+check "a resume that started a copy: NOT_DELIVERED with claude's line" \
+  "NOT_DELIVERED Org/other#5 bbbb2222 note: started a copy of session bbbb2222; the original is still running" "$(out)"
+check "a resume that started a copy: sent.log says failed" "resume${T}failed" \
+  "$(awk -F'\t' '$2 == "Org/other"' "$D/sent.log" | cut -f5-6)"
+check "a resume that started a copy: pending with one attempt" "1" "$(row pending.tsv Org/other 5 | cut -f4)"
 
 fresh
 enrol
@@ -419,6 +481,22 @@ echo '{"state":"OPEN","mergedBy":null}' >"$STUB_DIR/pr_view_11.json"
 run_pass
 check "full open list, open beyond it: still watched, not closed" "1|" \
   "$(row watch.tsv Org/repo 11 | wc -l | tr -d ' ')|$(row closed.txt Org/repo 11)"
+
+# An open-list entry without an updatedAt is left out, and makes the list
+# incomplete: the PR is looked up, not taken for closed, and never read as newer.
+fresh
+enrol
+echo "[{\"number\":10},{\"number\":11,\"updatedAt\":\"$T1\"},{\"number\":14,\"updatedAt\":\"$T1\"},{\"number\":15,\"updatedAt\":\"$T1\"},{\"number\":18,\"updatedAt\":\"$T1\"},{\"number\":30,\"updatedAt\":\"$T1\"}]" \
+  >"$STUB_DIR/pr_list_Org_repo.json"
+echo '{"state":"OPEN","mergedBy":null}' >"$STUB_DIR/pr_view_10.json"
+answer comments_10.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "an open PR without an updatedAt: no event, not read, looked up once" "|0|1" \
+  "$(out)|$(count_calls '^gh api repos/Org/repo/[a-z]*/10/')|$(count_calls 'pr view 10')"
+check "an open PR without an updatedAt: still watched, not closed" "1|" \
+  "$(row watch.tsv Org/repo 10 | wc -l | tr -d ' ')|$(row closed.txt Org/repo 10)"
+check "an open PR without an updatedAt: one log line for the pass" "1" \
+  "$(grep -c 'open PRs without an updatedAt, left out of this pass (PRs each): Org/repo (1)$' "$STATE/poll.log")"
 
 # --- A repository gh cannot read (Review Focus 2) -----------------------------------------
 fresh
@@ -557,6 +635,28 @@ wait_for_received_lines $((before + 2))
 check "a pending update goes to the PR's current owner" \
   "NOTIFIED Org/repo#10 inbox aaaa1111 2 comments from samrent-infuse" "$(out)"
 check "and leaves pending.tsv" "" "$(row pending.tsv Org/repo 10)"
+
+# --- A session that leaves the listing and comes back ----------------------------------------
+fresh
+enrol
+cp "$STUB_DIR/agents.json" "$STATE/agents.full.json"
+node -e '
+  const fs = require("fs");
+  const file = process.argv[1];
+  fs.writeFileSync(file, JSON.stringify(JSON.parse(fs.readFileSync(file, "utf8")).filter((a) => !a || a.id !== "bbbb2222")));
+' "$(cd "$STUB_DIR" && { pwd -W 2>/dev/null || pwd; })/agents.json"
+bbbb_rows() { awk -F'\t' -v s="$BBBB" '$3 == s { print $1 "#" $2 }' "$D/watch.tsv" | sort | tr '\n' ' ' | sed 's/ $//'; }
+run_pass
+check "a session missing from the listing: its watch rows go, and its scan row" "|" \
+  "$(bbbb_rows)|$(grep "^$BBBB" "$D/scan.tsv")"
+check "a session missing from the listing: one log line names it and its rows" "1" \
+  "$(grep -c "sessions no longer listed.*$BBBB (2)" "$STATE/poll.log")"
+check "a session missing from the listing: no events" "" "$(out)"
+cp "$STATE/agents.full.json" "$STUB_DIR/agents.json"
+run_pass
+check "listed again: its transcript is read again and its PRs are watched again" "Org/other#5 Org/other#6" "$(bbbb_rows)"
+check "listed again: its scan row is back" "1" "$(grep -c "^$BBBB" "$D/scan.tsv")"
+check "listed again: no events" "" "$(out)"
 
 # --- Failures and switches ------------------------------------------------------------------
 fresh

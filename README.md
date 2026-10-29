@@ -83,10 +83,10 @@ A run's prompt, the reviewer's prompt, the review body and Claude's JSON result 
 | `MAX_PARALLEL_REVIEWS` | Reviews running at once. |
 | `REREVIEW_SETTLE_SECONDS` | Quiet time before a re-review, so a run of fix-up pushes costs one review. |
 | `PR_UPDATE_ENABLED` | `false` turns the PR update watcher off. |
-| `PR_UPDATE_RESUME_RETIRED` | `false` stops the watcher from resuming retired sessions; their updates wait until the session is live again. |
+| `PR_UPDATE_RESUME_RETIRED` | `false` stops the watcher from resuming retired sessions; their updates wait until the session is live again, with an "update waiting" notification. |
 | `PR_UPDATE_MAX_RESUMES_PER_PASS` | Retired sessions resumed in one pass (2). The rest wait for the next pass. |
 | `PR_UPDATE_MAX_PER_PR_PER_DAY` | Messages to sessions about one PR in 24 hours (6). Later updates are dropped, with a notification. |
-| `PR_UPDATE_IGNORE_LOGINS` | Logins whose comments and reviews are not updates. Empty means `MY_LOGINS` plus `dependabot[bot]`. |
+| `PR_UPDATE_IGNORE_LOGINS` | Logins whose comments and reviews are not updates, besides `MY_LOGINS`, which are always ignored. Empty means `dependabot[bot]`. |
 
 ## When a PR is reviewed again
 
@@ -116,16 +116,16 @@ A teammate answers a PR hours after the Claude Code session that opened it went 
 
 When several sessions name one PR, one gets the message: the best source wins, then a live session over a retired one, then the one started last.
 
-**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (by default `MY_LOGINS` plus `dependabot[bot]`, so a session's own replies never wake it). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when the merger or closer is one of `MY_LOGINS`. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
+**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (always `MY_LOGINS`, so a session's own replies never wake it, plus `dependabot[bot]` by default). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when the merger or closer is one of `MY_LOGINS`. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
 
 **How a session is told.**
 
 - A live session gets the message in its inbox. Claude Code may hold it there as a peer message with a "Deliver" prompt until you approve it in the session. In the test on this machine, a session running with permission prompts bypassed held the message because its sender did not attest a permission mode, and an external script has no way to attest one. Claude Code's cross-session messaging documentation says that `"crossSessionInbound": "accept"` in `~/.claude/settings.json` makes such delivery automatic; that was not tested here. The watcher never changes your settings, and it cannot tell a held message from a delivered one, so the notification is how you find out.
 - A retired background session is resumed with `claude --bg --resume <session id> "<message>"`, run in the folder the session ran in, and starts on the update at once. It then stays running until Claude Code retires it again, about an hour idle on this machine. A retired session whose folder is gone is never resumed; you get a notification and carry the message by hand. Only background sessions are ever resumed.
 
-**Cost.** A message to a live session costs no resume; the session still spends tokens acting on it. A resume is expensive: it re-reads the session's whole context on the session's own model, and then works with nobody watching. On this machine the sessions run on opus and hold 100K tokens and more. `PR_UPDATE_MAX_RESUMES_PER_PASS` and `PR_UPDATE_MAX_PER_PR_PER_DAY` bound how many wake-ups there are, not what each one costs. With `PR_UPDATE_RESUME_RETIRED=false` nothing is resumed: the update of a retired session waits, silently, until that session is live again.
+**Cost.** A message to a live session costs no resume; the session still spends tokens acting on it. A resume is expensive: it re-reads the session's whole context on the session's own model, and then works with nobody watching. On this machine the sessions run on opus and hold 100K tokens and more. `PR_UPDATE_MAX_RESUMES_PER_PASS` and `PR_UPDATE_MAX_PER_PR_PER_DAY` bound how many wake-ups there are, not what each one costs. With `PR_UPDATE_RESUME_RETIRED=false` nothing is resumed: the update of a retired session waits until that session is live again, and you get one "update waiting" notification for it.
 
-**Notifications.** A message sent gives "PR #n: update", with the summary and the session. A message that could not be sent is tried once more on the next pass, then dropped with "carry the message by hand". A PR over its daily cap gives "update not forwarded". If the sessions cannot be listed you get "PR watcher cannot list sessions"; see `state/poll.log`. The events are `NOTIFIED`, `NOT_DELIVERED`, `WATCH_GAVE_UP`, `CAPPED_UPDATES` and `WATCH_FAILED`, and are also in `state/events.log`.
+**Notifications.** A message sent gives "PR #n: update", with the summary and the session. A message that could not be sent is tried once more on the next pass, then dropped with "carry the message by hand". A PR over its daily cap gives "update not forwarded". An update for a retired session while `PR_UPDATE_RESUME_RETIRED` is off gives "update waiting", once per new update. If the sessions cannot be listed you get "PR watcher cannot list sessions"; see `state/poll.log`. The events are `NOTIFIED`, `NOT_DELIVERED`, `WATCH_GAVE_UP`, `CAPPED_UPDATES`, `WAITING` and `WATCH_FAILED`, and are also in `state/events.log`.
 
 **Try it first.**
 

@@ -17,6 +17,7 @@
 #   NOT_DELIVERED <repo>#<n> <id> <why>                 "PR #n: session <id> not reached"
 #   WATCH_GAVE_UP <repo>#<n> <id>                       "PR #n: carry the message by hand"
 #   CAPPED_UPDATES <repo>#<n> <count>                   "PR #n: update not forwarded"
+#   WAITING <repo>#<n> <id> <summary>                   "PR #n: update waiting"
 #   WATCH_FAILED <why>                                  "PR watcher cannot list sessions"
 #   DRY_RUN <what>                                      no notification, only the log
 #
@@ -111,6 +112,7 @@ $ErrorActionPreference = 'Continue'
         }
         'NOT_DELIVERED' { Show-Toast "PR ${pr}: session $($words[2]) not reached" "$(($words | Select-Object -Skip 3) -join ' '). Tried again next pass." }
         'WATCH_GAVE_UP' { Show-Toast "PR ${pr}: carry the message by hand" "Session $($words[2]) could not be reached twice." }
+        'WAITING' { Show-Toast "PR ${pr}: update waiting" "$(($words | Select-Object -Skip 3) -join ' '). Session $($words[2]) is asleep and automatic resumes are off." }
         'CAPPED_UPDATES' { Show-Toast "PR ${pr}: update not forwarded" "$($words[2]) messages today already (PR_UPDATE_MAX_PER_PR_PER_DAY)." }
         'WATCH_FAILED' { Show-Toast 'PR watcher cannot list sessions' 'See state\poll.log.' }
     }

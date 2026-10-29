@@ -29,6 +29,9 @@ const path = require('path');
 
 const PULL_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
 const CREATED_URL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/;
+// The repository of a pr-link record ends up in gh api paths, so it must look
+// like one the URLs above can match.
+const REPO_NAME = /^[\w.-]+\/[\w.-]+$/;
 const MAX_CREATE_LINES = 3;
 const SOURCE_RANK = { created: 0, linked: 1, mentioned: 2 };
 const NEWLINE = 0x0a;
@@ -89,8 +92,9 @@ function prsInLine(line) {
   } catch (e) {
     return [];
   }
-  if (entry.type === 'pr-link' && entry.prRepository && Number.isInteger(entry.prNumber)) {
-    return [{ repo: entry.prRepository, number: entry.prNumber, source: 'linked' }];
+  if (entry.type === 'pr-link') {
+    const valid = typeof entry.prRepository === 'string' && REPO_NAME.test(entry.prRepository) && Number.isInteger(entry.prNumber);
+    return valid ? [{ repo: entry.prRepository, number: entry.prNumber, source: 'linked' }] : [];
   }
   const content = entry.type === 'user' && entry.message ? entry.message.content : null;
   if (Array.isArray(content)) return createdBy(content);

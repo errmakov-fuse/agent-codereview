@@ -112,4 +112,10 @@ fourth="$(run)"
 check "a transcript shorter than its offset is rescanned from the start" \
   "PR${T}Org/repo${T}20${T}$AAAA${T}linked" "$(prs "$fourth")"
 
+# A pr-link whose repository is not owner/name would end up in gh api paths.
+printf '%s\n' "{\"type\":\"pr-link\",\"sessionId\":\"$AAAA\",\"prNumber\":21,\"prRepository\":\"Org/repo/../../user\"}" \
+  >> "$AAAA_FILE"
+fifth="$(run)"
+check "a pr-link with a repository that is not owner/name gives no row" "" "$(prs "$fifth")"
+
 exit "$failed"

@@ -14,7 +14,8 @@
 #   unreachable.tsv  repo, first failure (ISO): a repository GitHub would not
 #                 resolve (deleted, or hidden from the current gh account), kept
 #                 until a pass reads it again, so the outage is logged once
-#   scan.tsv      session id, bytes read (written by session_prs.js, not by this file)
+#   scan.tsv      session id, bytes read (written by session_prs.js; watch_drop_gone
+#                 removes the rows of sessions that left the listing)
 #   lock/         directory holding a pid file: the pass that is running
 #
 # The lock here is not a RUNNING_DIR lock: those are counted as review runs.
@@ -28,6 +29,7 @@ WATCH_PENDING="$PR_UPDATES_DIR/pending.tsv"
 WATCH_SENT="$PR_UPDATES_DIR/sent.log"
 WATCH_CLOSED="$PR_UPDATES_DIR/closed.txt"
 WATCH_UNREACHABLE="$PR_UPDATES_DIR/unreachable.tsv"
+WATCH_SCAN="$PR_UPDATES_DIR/scan.tsv"
 WATCH_LOCK="$PR_UPDATES_DIR/lock"
 SECONDS_PER_DAY=86400
 
@@ -134,12 +136,30 @@ watch_add() {
   printf '%s\t%s\t%s\t%s\t%s\n' "$repo" "$n" "$session" "$source" "$(date -u +%FT%TZ)" >>"$WATCH_ROWS"
 }
 
-# Forgets the watchers whose session is no longer in sessions.tsv.
+# Forgets the watchers whose session is no longer in sessions.tsv, and how far
+# their transcripts were read: a session that comes back is read from the start,
+# or the PRs it named before would never be offered again. Logs one line.
 watch_drop_gone() {
+  local gone ids
   [ -f "$WATCH_ROWS" ] || return 0
-  awk -F'\t' -v sessions="$WATCH_SESSIONS" '
+  # "<session id> <rows>" per session that left, the kept rows in the .tmp file.
+  gone=$(awk -F'\t' -v sessions="$WATCH_SESSIONS" -v kept="$WATCH_ROWS.tmp" '
     BEGIN { while ((getline line < sessions) > 0) { split(line, f, "\t"); known[f[2]] = 1 } }
-    $3 in known' "$WATCH_ROWS" >"$WATCH_ROWS.tmp" && mv "$WATCH_ROWS.tmp" "$WATCH_ROWS"
+    $3 in known { print > kept; next }
+    { count[$3]++ }
+    END { printf "" > kept; for (s in count) print s " " count[s] }' "$WATCH_ROWS") || return 1
+  if [ -z "$gone" ]; then
+    rm -f "$WATCH_ROWS.tmp"
+    return 0
+  fi
+  mv "$WATCH_ROWS.tmp" "$WATCH_ROWS" || return 1
+  ids=$(cut -d' ' -f1 <<<"$gone" | tr '\n' ' ')
+  if [ -f "$WATCH_SCAN" ]; then
+    awk -F'\t' -v ids="$ids" 'BEGIN { n = split(ids, g, " "); for (i = 1; i <= n; i++) drop[g[i]] = 1 }
+      !($1 in drop)' "$WATCH_SCAN" >"$WATCH_SCAN.tmp" && mv "$WATCH_SCAN.tmp" "$WATCH_SCAN" || return 1
+  fi
+  log "sessions no longer listed, their watch rows dropped and their transcripts to be read again if they come back (watch rows each):" \
+    "$(awk '{ printf "%s%s (%s)", sep, $1, $2; sep = ", " }' <<<"$gone")"
 }
 
 watch_drop_pr() {
