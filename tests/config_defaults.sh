@@ -62,8 +62,12 @@ PR_UPDATE_MAX_RESUMES_PER_PASS = 2
 PR_UPDATE_RESUME_RETIRED = true
 -d \"\$PR_UPDATES_DIR\"" "$(loaded "$TMP/defaults.env" "$TMP/state1")"
 
-check "the settings as shipped in config.env load as the defaults do" \
-  "$(loaded "$TMP/defaults.env" "$TMP/state2")" "$(loaded "$CONFIG_SRC" "$TMP/state3")"
+# The shipped config sets its own extra ignored logins; every other setting it
+# ships at the default value.
+shipped_ignore="$(. "$CONFIG_SRC" && echo "${PR_UPDATE_IGNORE_LOGINS:-dependabot[bot]}")"
+check "the settings as shipped in config.env load as the defaults do, plus its ignored logins" \
+  "$(loaded "$TMP/defaults.env" "$TMP/state2" | sed "s/^PR_UPDATE_IGNORE_LOGINS = .*/PR_UPDATE_IGNORE_LOGINS = \"$my_logins $shipped_ignore\"/")" \
+  "$(loaded "$CONFIG_SRC" "$TMP/state3")"
 
 check "extra ignored logins are added to MY_LOGINS, not put in their place" \
   "PR_UPDATE_IGNORE_LOGINS = \"$my_logins renovate[bot] ci-bot\"" \
