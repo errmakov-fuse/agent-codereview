@@ -1,5 +1,9 @@
 {"type":"pr-link","sessionId":"aaaa1111-0000-4000-8000-000000000001","prNumber":10,"prUrl":"https://github.com/Org/repo/pull/10","prRepository":"Org/repo","timestamp":"2026-01-01T00:00:00Z"}
 {"type":"user","message":{"role":"user","content":"please also look at https://github.com/Org/repo/pull/11 thanks"}}
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"see https://github.com/Org/repo/pull/12"}]}}
-{"type":"assistant","message":{"role":"assistant","content":"unrelated https://github.com/Org/repo/pull/14"}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"#12  Fix a thing  fix-a-thing  OPEN  https://github.com/Org/repo/pull/12\n#9   Older thing  older  MERGED  https://github.com/Org/repo/pull/9"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"https://github.com/Org/repo/pull/14"}]}]}}
+{"type":"pr-link","sessionId":"aaaa1111-0000-4000-8000-000000000001","prNumber":15,"prUrl":"https://github.com/Org/repo/pull/15","prRepository":"Org/repo","timestamp":"2026-01-01T00:00:01Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":"Creating pull request for x into master in Org/repo\n\nhttps://github.com/Org/repo/pull/15\n"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"a\nb\nc\nhttps://github.com/Org/repo/pull/17"}]}}
+{"type":"assistant","message":{"role":"assistant","content":"unrelated https://github.com/Org/repo/pull/16"}}
 {"type":"pr-link","sessionId":"x","prNumber":99,"prRepo

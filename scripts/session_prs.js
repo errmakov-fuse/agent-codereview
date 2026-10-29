@@ -5,15 +5,20 @@
 // Prints tab-separated lines:
 //
 //   SESSION  short-id  session-id  live|retired  pid|-  startedAt-ms  cwd  name
-//   PR       owner/repo  number  session-id  created|mentioned
+//   PR       owner/repo  number  session-id  created|linked|mentioned
 //
 // A session is live when it has a pid, and retired when it is a background
 // session with no pid whose jobs/<id>/state.json still exists; any other session
 // is skipped. Its transcript is the linkScanPath in that state.json, or else
 // projects/<cwd with non-alphanumerics as "-">/<session id>.jsonl.
 //
-// A PR is "created" by a pr-link line in the transcript and "mentioned" by a
-// github.com/.../pull/N link in something the user typed (not a tool result).
+// A PR has three sources, best first, and is printed once per session with the
+// best one found in this run:
+//   created    a tool result that is just the URL `gh pr create` prints: at most
+//              three lines, the last one exactly a PR URL
+//   linked     a pr-link record; Claude Code writes one whenever a PR URL goes by
+//              in tool output, so it means "seen", not "created"
+//   mentioned  a PR URL in something the user typed (a string-content user turn)
 //
 // scan.tsv (session id, bytes) remembers how far each transcript has been read,
 // so only new lines are looked at. A last line with no newline yet is left for
@@ -23,6 +28,9 @@ const os = require('os');
 const path = require('path');
 
 const PULL_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
+const CREATED_URL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/;
+const MAX_CREATE_LINES = 3;
+const SOURCE_RANK = { created: 0, linked: 1, mentioned: 2 };
 const NEWLINE = 0x0a;
 
 const claudeHome = process.env.CLAUDE_HOME || path.join(os.homedir(), '.claude');
@@ -48,11 +56,28 @@ function transcriptPath(session, home) {
   return path.join(home, 'projects', slug, `${session.sessionId}.jsonl`);
 }
 
+// The text of a tool_result block: a string, or an array of {type:"text", text}.
+function toolResultText(block) {
+  if (typeof block.content === 'string') return block.content;
+  if (!Array.isArray(block.content)) return '';
+  return block.content.filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n');
+}
+
+// What `gh pr create` prints: at most a few lines ending in the PR URL.
+function createdBy(blocks) {
+  const found = [];
+  for (const block of blocks) {
+    if (!block || block.type !== 'tool_result') continue;
+    const lines = toolResultText(block).trim().split(/\r?\n/);
+    const m = lines.length <= MAX_CREATE_LINES ? CREATED_URL.exec(lines[lines.length - 1].trim()) : null;
+    if (m) found.push({ repo: m[1], number: Number(m[2]), source: 'created' });
+  }
+  return found;
+}
+
 // Returns [{repo, number, source}] for one transcript line.
 function prsInLine(line) {
-  const maybeCreated = line.includes('"pr-link"');
-  const maybeMentioned = line.includes('/pull/');
-  if (!maybeCreated && !maybeMentioned) return [];
+  if (!line.includes('"pr-link"') && !line.includes('/pull/')) return [];
   let entry;
   try {
     entry = JSON.parse(line);
@@ -60,11 +85,22 @@ function prsInLine(line) {
     return [];
   }
   if (entry.type === 'pr-link' && entry.prRepository && Number.isInteger(entry.prNumber)) {
-    return [{ repo: entry.prRepository, number: entry.prNumber, source: 'created' }];
+    return [{ repo: entry.prRepository, number: entry.prNumber, source: 'linked' }];
   }
   const content = entry.type === 'user' && entry.message ? entry.message.content : null;
+  if (Array.isArray(content)) return createdBy(content);
   if (typeof content !== 'string') return [];
   return [...content.matchAll(PULL_URL)].map(m => ({ repo: m[1], number: Number(m[2]), source: 'mentioned' }));
+}
+
+// One entry per PR, keeping the best source seen: created, then linked, then mentioned.
+function bestSources(rows) {
+  const best = new Map();
+  for (const { repo, number, source } of rows) {
+    const key = `${repo}\t${number}`;
+    if (!best.has(key) || SOURCE_RANK[source] < SOURCE_RANK[best.get(key)]) best.set(key, source);
+  }
+  return best;
 }
 
 // Reads the transcript from `offset` and returns {rows, bytes}: the PRs found
@@ -134,11 +170,8 @@ async function main() {
       continue;
     }
     offsets.set(session.sessionId, scan.bytes);
-    const seen = new Set();
-    for (const { repo, number, source } of scan.rows) {
-      const row = ['PR', repo, number, session.sessionId, source].join('\t');
-      if (!seen.has(row)) console.log(row);
-      seen.add(row);
+    for (const [key, source] of bestSources(scan.rows)) {
+      console.log(['PR', key, session.sessionId, source].join('\t'));
     }
   }
   writeScan(scanFile, offsets);

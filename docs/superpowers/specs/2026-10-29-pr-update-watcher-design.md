@@ -54,13 +54,11 @@ Done-ness does not matter: a session that printed `result:` and whose PR then ge
 
 ### Which PRs belong to a session
 
-Claude Code writes a `pr-link` record into a session's transcript when the session creates a PR (`gh pr create`), with the PR number, URL and repository. The job tracker builds the session's PR list from it, and `claude --from-pr` searches it. This is the primary source: precise, and free to read.
-
-Second source (my call): a PR URL that appears in a user turn of the transcript, that is, a PR the owner pasted to the session. Tool output is ignored, since `gh pr list` output mentions dozens of PRs incidentally.
+A `pr-link` record in a transcript (PR number, URL, repository) means the session saw that PR, not that it created it: Claude Code writes one whenever a PR URL scrolls past in tool output, so a controller session holds dozens for PRs its workers opened. The watcher therefore ranks three sources: `created`, a tool result that is just what `gh pr create` prints (at most three lines, the last one exactly a PR URL, so `gh pr list` and `gh pr view` output does not match); `linked`, a `pr-link` record; and `mentioned`, a PR URL in a user turn typed as text, that is, a PR the owner pasted to the session. Other tool output is ignored, since `gh pr list` output mentions dozens of PRs incidentally. When several sessions name one PR, the owner is the one with the best source (created, then linked, then mentioned), then a live session before a retired one, then the most recently started.
 
 Any repository counts, not only `REPO`; the sessions also open PRs on this repository itself. `gh` must have access to it, or the PR is logged and skipped.
 
-When several sessions name one PR (the owner forks sessions, and forks share history), the message goes to the session that created it. If that session is deleted, it goes to the most recently updated active session that mentions it. One session per PR per update, never more.
+When several sessions name one PR (the owner forks sessions, and forks share history), the message goes to the owner picked by the order above. If that session is deleted, it goes to the next one in that order. One session per PR per update, never more.
 
 ### What counts as an update
 

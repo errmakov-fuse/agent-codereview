@@ -61,10 +61,12 @@ other work
 check "cwd and start time are printed" \
   "1700000000000${T}C:\\w\\repo\\.claude\\worktrees\\HUB-1_x" \
   "$(grep "^SESSION${T}aaaa1111" <<<"$first" | cut -f6,7)"
-check "first run finds created and mentioned PRs, and ignores tool results and other turns" \
-  "PR${T}Org/other${T}5${T}$BBBB${T}created
-PR${T}Org/repo${T}10${T}$AAAA${T}created
-PR${T}Org/repo${T}11${T}$AAAA${T}mentioned" "$(prs "$first")"
+check "first run ranks sources, and finds no row for 12 (a table), 16 (assistant turn), 17 (4 lines)" \
+  "PR${T}Org/other${T}5${T}$BBBB${T}linked
+PR${T}Org/repo${T}10${T}$AAAA${T}linked
+PR${T}Org/repo${T}11${T}$AAAA${T}mentioned
+PR${T}Org/repo${T}14${T}$AAAA${T}created
+PR${T}Org/repo${T}15${T}$AAAA${T}created" "$(prs "$first")"
 check "a session whose transcript is missing is still listed, with a note on stderr" \
   "1" "$(grep -c 'dddd4444' "$WORK/stderr")"
 check "scan.tsv has a row per scanned transcript only" \
@@ -82,13 +84,13 @@ printf '%s\n%s\n' '":1}' \
   >> "$HOME_DIR/projects/C--w-repo--claude-worktrees-HUB-1-x/$AAAA.jsonl"
 third="$(run)"
 check "third run finds only the PR added since" \
-  "PR${T}Org/repo${T}13${T}$AAAA${T}created" "$(prs "$third")"
+  "PR${T}Org/repo${T}13${T}$AAAA${T}linked" "$(prs "$third")"
 
 # A transcript that shrank (rotated) is scanned again from the start.
 printf '%s\n' "{\"type\":\"pr-link\",\"sessionId\":\"$AAAA\",\"prNumber\":20,\"prRepository\":\"Org/repo\"}" \
   > "$HOME_DIR/projects/C--w-repo--claude-worktrees-HUB-1-x/$AAAA.jsonl"
 fourth="$(run)"
 check "a transcript shorter than its offset is rescanned from the start" \
-  "PR${T}Org/repo${T}20${T}$AAAA${T}created" "$(prs "$fourth")"
+  "PR${T}Org/repo${T}20${T}$AAAA${T}linked" "$(prs "$fourth")"
 
 exit "$failed"
