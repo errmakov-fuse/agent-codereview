@@ -121,11 +121,15 @@ list_sessions() {
     watch_failed "no session listed"
     return 1
   fi
-  sessions_save <<<"$listing"
+  if ! sessions_save <<<"$listing"; then
+    watch_failed "saving the session list failed"
+    return 1
+  fi
+  # scan.tsv has moved past these rows, so a lost one is not offered again.
   while IFS=$'\t' read -r kind repo n session source; do
     [ "$kind" = PR ] || continue
     closed_has "$repo" "$n" && continue
-    watch_add "$repo" "$n" "$session" "$source"
+    watch_add "$repo" "$n" "$session" "$source" || log "could not record that session $session watches $repo#$n"
   done <<<"$listing"
   watch_drop_gone
 }
@@ -152,14 +156,23 @@ can_resume() {
 # (an update stays pending), nofolder (it would be resumed, but the folder it
 # ran in is gone, and waking it anywhere else would let it loose in an
 # unrelated repository) or skip (a closing notice for a retired session).
+# Fails when the session cannot be read: a live session taken for a retired
+# one would be resumed, which starts a copy of it.
 route_for() {
-  local owner="$1" kind="$2" cwd
-  if [ "$(session_field "$owner" status)" = live ]; then
-    echo inbox
-  elif [ "$kind" != update ]; then
+  local owner="$1" kind="$2" status cwd
+  status=$(session_field "$owner" status) || return 1
+  case "$status" in
+    live)
+      echo inbox
+      return 0
+      ;;
+    retired) ;;
+    *) return 1 ;;
+  esac
+  if [ "$kind" != update ]; then
     echo skip
   elif can_resume "$owner"; then
-    cwd=$(session_field "$owner" cwd)
+    cwd=$(session_field "$owner" cwd) || return 1
     if [ -n "$cwd" ] && [ -d "$cwd" ]; then echo resume; else echo nofolder; fi
   else
     echo wait
@@ -181,7 +194,11 @@ send_inbox() {
 # nothing here passes through a shell.
 send_resume() {
   local owner="$1" message="$2" cwd out
-  cwd=$(session_field "$owner" cwd)
+  # `cd ""` stays put, so an unread folder would resume it wherever this runs.
+  if ! cwd=$(session_field "$owner" cwd) || [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
+    echo "session folder could not be read"
+    return 1
+  fi
   if out=$(cd "$cwd" && claude --bg --resume "$owner" "$message" </dev/null 2>&1); then
     log "resumed session $owner: ${out//$'\n'/ | }"
     return 0
@@ -199,10 +216,26 @@ transmit() {
   esac
 }
 
+# The attempts so far of a PR's pending update (empty when there is none).
+pending_attempts() {
+  local row
+  row=$(pending_get "$1" "$2") || return 1
+  row="${row#*$'\t'}"
+  printf '%s\n' "${row%%$'\t'*}"
+}
+
+# Keeps an update in pending.tsv for a later pass, its attempts unchanged. An
+# unreadable count is taken as 0: at worst one more try before giving up.
+defer_update() {
+  local repo="$1" n="$2" owner="$3" summary="$4" attempts
+  attempts=$(pending_attempts "$repo" "$n") || attempts=""
+  pending_set "$repo" "$n" "$owner" "${attempts:-0}" "$summary"
+}
+
 # A failed update: one more attempt in pending.tsv, or given up after the last.
 count_failure() {
   local repo="$1" n="$2" owner="$3" short="$4" summary="$5" why="$6" attempts
-  attempts=$(pending_get "$repo" "$n" | cut -f2)
+  attempts=$(pending_attempts "$repo" "$n") || attempts=""
   attempts=$((${attempts:-0} + 1))
   if [ "$attempts" -ge "$MAX_DELIVERY_ATTEMPTS" ]; then
     pending_drop "$repo" "$n"
@@ -218,7 +251,11 @@ count_failure() {
 send_message() {
   local repo="$1" n="$2" owner="$3" route="$4" summary="$5" kind="$6" short message why
   short=$(session_field "$owner" short)
-  message=$(compose_message "$kind" "$repo" "$n" "$summary")
+  if ! message=$(compose_message "$kind" "$repo" "$n" "$summary") || [ -z "$message" ]; then
+    log "composing the message for $repo#$n failed: $summary"
+    [ "$kind" = update ] && defer_update "$repo" "$n" "$owner" "$summary"
+    return 0
+  fi
   if [ "$route" = resume ]; then
     resumes=$((resumes + 1))
     resumed="$resumed$owner "
@@ -236,38 +273,51 @@ send_message() {
   fi
 }
 
-# deliver <repo> <n> <summary> <update|merged|closed>
-deliver() {
-  local repo="$1" n="$2" summary="$3" kind="$4" count owner route attempts
-  if [ "$kind" = update ]; then
-    count=$(sent_last_day "$repo" "$n")
-    if [ "$count" -ge "$PR_UPDATE_MAX_PER_PR_PER_DAY" ]; then
-      log "$repo#$n had $count messages in the last day; not forwarded: $summary"
-      pending_drop "$repo" "$n"
-      event "CAPPED_UPDATES $repo#$n $count"
-      return 0
-    fi
+# True when an update to a PR is over the daily cap; drops it and says so. An
+# unreadable count lets the update through: at worst one over the cap.
+over_cap() {
+  local repo="$1" n="$2" summary="$3" count
+  if ! count=$(sent_last_day "$repo" "$n") || [ -z "$count" ]; then
+    log "counting the messages of $repo#$n failed; not capping this one"
+    return 1
   fi
-  owner=$(watch_owner "$repo" "$n")
-  if [ -z "$owner" ]; then
+  [ "$count" -ge "$PR_UPDATE_MAX_PER_PR_PER_DAY" ] || return 1
+  log "$repo#$n had $count messages in the last day; not forwarded: $summary"
+  pending_drop "$repo" "$n"
+  event "CAPPED_UPDATES $repo#$n $count"
+}
+
+# deliver <repo> <n> <summary> <update|merged|closed>. An update that cannot be
+# routed now is kept in pending.tsv, never dropped.
+deliver() {
+  local repo="$1" n="$2" summary="$3" kind="$4" owner route
+  [ "$kind" = update ] && over_cap "$repo" "$n" "$summary" && return 0
+  if ! owner=$(watch_owner "$repo" "$n"); then
+    route=unknown owner=-
+  elif [ -z "$owner" ]; then
     log "$repo#$n has no session watching it any more; dropped: $summary"
     pending_drop "$repo" "$n"
     return 0
+  elif ! route=$(route_for "$owner" "$kind"); then
+    route=unknown
   fi
-  route=$(route_for "$owner" "$kind")
   case "$route" in
     inbox | resume) send_message "$repo" "$n" "$owner" "$route" "$summary" "$kind" ;;
     wait)
-      attempts=$(pending_get "$repo" "$n" | cut -f2)
-      pending_set "$repo" "$n" "$owner" "${attempts:-0}" "$summary"
+      defer_update "$repo" "$n" "$owner" "$summary"
       log "$repo#$n waits: session $owner is retired and cannot be resumed in this pass"
       ;;
     nofolder)
-      log "$repo#$n: not resuming session $owner, its folder is gone ($(session_field "$owner" cwd))"
+      log "$repo#$n: not resuming session $owner, its folder is gone"
       count_failure "$repo" "$n" "$owner" "$(session_field "$owner" short)" "$summary" "session folder is gone"
       ;;
     skip) log "$repo#$n $summary; session $owner is retired, so it gets no notice" ;;
+    *)
+      log "could not read how to reach session $owner for $repo#$n: $kind $summary; updates wait for the next pass"
+      [ "$kind" = update ] && defer_update "$repo" "$n" "$owner" "$summary"
+      ;;
   esac
+  return 0
 }
 
 # Pending rows are read before any is rewritten.
@@ -284,7 +334,8 @@ retry_pending() {
 # --- PRs ---------------------------------------------------------------------
 
 # Reads what is new on a PR since <since> (empty: everything) and sends it.
-# Fails only when gh does; a bad answer skips this PR for this pass.
+# Fails when gh or a ledger read does; a bad answer skips this PR for this
+# pass. seen moves only once the news is known and its pending row was read.
 fetch_updates() {
   local repo="$1" n="$2" updated="$3" since="$4" query comments review_comments reviews result
   local newest summary old
@@ -297,11 +348,18 @@ fetch_updates() {
     log "could not read the updates of $repo#$n; trying again next pass"
     return 0
   fi
-  { read -r newest; read -r summary; } <<<"$result"
-  [ "$newest" = - ] && newest="${since:-$(now)}"
+  # Line 1 the newest kept time or -, line 2 the summary (gone when empty).
+  newest="${result%%$'\n'*}"
+  summary=""
+  [ "$newest" != "$result" ] && summary="${result#*$'\n'}"
+  [ "$newest" = - ] && { newest="$since"; [ -n "$newest" ] || newest=$(now); }
+  if [ -z "$newest" ] || ! old=$(pending_get "$repo" "$n"); then
+    log "reading the ledger for $repo#$n failed; trying again next pass"
+    return 1
+  fi
   seen_set "$repo" "$n" "$updated" "$newest"
   [ -n "$summary" ] || return 0
-  old=$(pending_get "$repo" "$n" | cut -f3)
+  old="${old##*$'\t'}"
   [ -n "$old" ] && summary="$old; then $summary"
   deliver "$repo" "$n" "$summary" update
   return 0
@@ -309,14 +367,18 @@ fetch_updates() {
 
 # An open PR: enrolled on first sight, read when its updatedAt moved.
 check_pr() {
-  local repo="$1" n="$2" updated="$3" seen
-  seen=$(seen_get "$repo" "$n")
+  local repo="$1" n="$2" updated="$3" seen stamp
+  if ! seen=$(seen_get "$repo" "$n"); then
+    log "reading the seen row of $repo#$n failed; trying again next pass"
+    return 1
+  fi
   if [ -z "$seen" ]; then
     if [ "$backfill" -eq 1 ]; then
       fetch_updates "$repo" "$n" "$updated" ""
       return
     fi
-    seen_set "$repo" "$n" "$updated" "$(now)"
+    stamp=$(now) && [ -n "$stamp" ] || return 1
+    seen_set "$repo" "$n" "$updated" "$stamp"
     return 0
   fi
   [[ "$updated" > "${seen%%$'\t'*}" ]] || return 0
@@ -348,7 +410,10 @@ notify_closed() {
 # resolve the repository, 1 otherwise.
 settle_closed() {
   local repo="$1" n="$2" complete="$3" seen view status
-  seen=$(seen_get "$repo" "$n")
+  if ! seen=$(seen_get "$repo" "$n"); then
+    log "reading the seen row of $repo#$n failed; trying again next pass"
+    return 1
+  fi
   if closed_has "$repo" "$n" || { [ -z "$seen" ] && [ "$complete" -eq 1 ]; }; then
     forget_pr "$repo" "$n"
     return 0
@@ -379,6 +444,24 @@ watched_in() {
   watch_prs | awk -F'\t' -v repo="$1" '$1 == repo { print $2 }'
 }
 
+# The updatedAt of PR <n> in an open list ("<n>\t<updatedAt>" lines), or
+# nothing when the PR is not in it. Fails only when the lookup itself does,
+# which must not read as "not open": that path can forget the PR.
+open_updated_at() {
+  awk -F'\t' -v n="$2" '$1 == n { print $2; exit }' <<<"$1"
+}
+
+# 1 when an open list holds fewer than MAX_OPEN_PRS PRs, so a PR missing from
+# it is not open. An uncountable list counts as full, which only costs a call.
+list_is_complete() {
+  local count
+  count=$(grep -c . <<<"$1")
+  case "$count" in
+    '' | *[!0-9]*) echo 0 ;;
+    *) [ "$count" -lt "$MAX_OPEN_PRS" ] && echo 1 || echo 0 ;;
+  esac
+}
+
 # A repository GitHub would not resolve keeps its rows and waits; the outage is
 # logged when it starts, not on every pass.
 repo_unreachable() {
@@ -402,9 +485,12 @@ check_repo() {
     log "listing the open PRs of $repo failed; its PRs wait for the next pass"
     return 0
   fi
-  [ "$(grep -c . <<<"$open")" -lt "$MAX_OPEN_PRS" ] && complete=1
+  complete=$(list_is_complete "$open") || complete=0
   for n in $(watched_in "$repo"); do
-    updated=$(awk -F'\t' -v n="$n" '$1 == n { print $2; exit }' <<<"$open")
+    if ! updated=$(open_updated_at "$open" "$n"); then
+      log "reading the open list of $repo failed for #$n; trying again next pass"
+      continue
+    fi
     if [ -z "$updated" ]; then
       settle_closed "$repo" "$n" "$complete"
     else
@@ -416,11 +502,18 @@ check_repo() {
       repo_unreachable "$repo"
       return 0
     fi
-    log "reading $repo#$n from GitHub failed; trying it again next pass"
+    log "reading $repo#$n failed; trying it again next pass"
   done
   unreachable_clear "$repo" && log "the repository $repo is reachable again"
   return 0
 }
+
+# Tests only: a file sourced after every function above is defined, so a test
+# can replace one (tests/watch_pass.sh makes a lookup fail this way).
+if [ -n "$WATCH_PASS_TEST_HOOK" ]; then
+  # shellcheck source=/dev/null
+  . "$WATCH_PASS_TEST_HOOK"
+fi
 
 list_sessions || exit 1
 retry_pending

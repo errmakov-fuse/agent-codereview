@@ -65,6 +65,13 @@ watch_row_of() {
   awk -F'\t' -v repo="$2" -v n="$3" '$1 == repo && $2 == n { print; exit }' "$1"
 }
 
+# The same row without its repo and number columns. One awk and no pipe, so a
+# caller can tell a failed read (non-zero) from a PR with no row (empty, zero).
+watch_row_rest() {
+  [ -f "$1" ] || return 0
+  awk -F'\t' -v repo="$2" -v n="$3" '$1 == repo && $2 == n { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }' "$1"
+}
+
 # --- Lock --------------------------------------------------------------------
 
 # Takes the lock, or fails if a live pass holds it. A lock whose process is gone
@@ -173,7 +180,7 @@ watch_owner() {
 
 # "<updatedAt>\t<newest>" for a PR, or nothing.
 seen_get() {
-  watch_row_of "$WATCH_SEEN" "$1" "$2" | cut -f3-4
+  watch_row_rest "$WATCH_SEEN" "$1" "$2"
 }
 
 seen_set() {
@@ -210,7 +217,7 @@ pending_set() {
 
 # "<session id>\t<attempts>\t<summary>" for a PR, or nothing.
 pending_get() {
-  watch_row_of "$WATCH_PENDING" "$1" "$2" | cut -f3-5
+  watch_row_rest "$WATCH_PENDING" "$1" "$2"
 }
 
 pending_drop() {

@@ -110,6 +110,8 @@ last_message() {
 scenario=0
 # A new state dir and stub dir; the arguments are extra config.env lines.
 fresh() {
+  check_stderr_clean
+  HOOK=""
   scenario=$((scenario + 1))
   STATE="$WORK/state$scenario"
   STUB_DIR="$STATE/stub"
@@ -153,8 +155,17 @@ answer() { echo "[$2]" >"$STUB_DIR/$1"; }
 run_pass() {
   HOME="$FAKE_USER" PATH="$STUB_PATH" STUB_DIR="$STUB_DIR" CLAUDE_HOME="$HOME_DIR" \
     AGENT_CODEREVIEW_CONFIG="$CONF" AGENT_CODEREVIEW_STATE="$STATE" \
-    bash "$WATCHER" "$@" >"$WORK/out" 2>"$WORK/err"
+    WATCH_PASS_TEST_HOOK="$HOOK" bash "$WATCHER" "$@" >"$WORK/out" 2>>"$STATE/err"
   echo $? >"$WORK/status"
+}
+
+# bash's own complaints (a failed fork, a missing command, a bad test) in a
+# scenario's stderr mean a pass ran on a lookup that failed; the watcher
+# itself writes nothing to stderr.
+check_stderr_clean() {
+  [ -n "$STATE" ] || return 0
+  check "scenario $scenario: no bash errors on stderr" "" \
+    "$(grep -E 'line [0-9]+:|fork|: command not found' "$STATE/err" 2>/dev/null)"
 }
 out() { cat "$WORK/out"; }
 status() { cat "$WORK/status"; }
@@ -492,7 +503,22 @@ check "a PR gh fails to read does not hold up the next one" \
   "NOTIFIED Org/repo#11 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
 check "a PR gh fails to read stays watched, not closed" "1|" \
   "$(row watch.tsv Org/repo 10 | wc -l | tr -d ' ')|$(row closed.txt Org/repo 10)"
-check "a PR gh fails to read is logged" "1" "$(grep -c 'reading Org/repo#10 from GitHub failed' "$STATE/poll.log")"
+check "a PR gh fails to read is logged" "1" "$(grep -c 'reading Org/repo#10 failed' "$STATE/poll.log")"
+
+# A lookup in the open list that fails must not read as "not open": on first
+# sight with a complete list that path forgets the PR without a word.
+fresh
+HOOK="$STATE/hook.sh"
+echo 'open_updated_at() { return 1; }' >"$HOOK"
+run_pass
+check "a failed open-list lookup: no events" "" "$(out)"
+check "a failed open-list lookup: every watched PR is kept, none closed" "6|" \
+  "$(awk -F'\t' '$1 == "Org/repo"' "$D/watch.tsv" | wc -l | tr -d ' ')|$(awk -F'\t' '$1 == "Org/repo"' "$D/closed.txt" 2>/dev/null)"
+check "a failed open-list lookup: logged for each PR" "6" \
+  "$(grep -c 'reading the open list of Org/repo failed' "$STATE/poll.log")"
+HOOK=""
+run_pass
+check "the lookup works again: the PRs are enrolled" "$T1" "$(seen_updated Org/repo 10)"
 
 # --- Dry run and backfill ---------------------------------------------------------------
 fresh
@@ -565,4 +591,5 @@ fresh PR_UPDATE_ENABLED=ON
 run_pass
 check "PR_UPDATE_ENABLED=ON runs a pass" "1" "$(count_calls '^claude agents')"
 
+check_stderr_clean
 exit "$failed"
