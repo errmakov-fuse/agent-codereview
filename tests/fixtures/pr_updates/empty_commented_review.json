@@ -1,0 +1,9 @@
+{
+  "comments": [],
+  "reviewComments": [
+    {"id": 2301, "user": {"login": "samrent-infuse"}, "created_at": "2026-10-29T11:00:05Z", "body": "Nit: rename this.", "pull_request_review_id": 1301}
+  ],
+  "reviews": [
+    {"id": 1301, "user": {"login": "samrent-infuse"}, "state": "COMMENTED", "submitted_at": "2026-10-29T11:00:06Z", "body": ""}
+  ]
+}
