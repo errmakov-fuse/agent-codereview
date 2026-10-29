@@ -32,12 +32,15 @@ const CREATED_URL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/;
 const MAX_CREATE_LINES = 3;
 const SOURCE_RANK = { created: 0, linked: 1, mentioned: 2 };
 const NEWLINE = 0x0a;
+const BOM = String.fromCharCode(0xfeff); // Windows PowerShell 5.1 puts one on piped text
 
 const claudeHome = process.env.CLAUDE_HOME || path.join(os.homedir(), '.claude');
 const stateDir = process.env.STATE_DIR;
 
 const oneLine = text => String(text).replace(/[\t\r\n]+/g, ' ');
 const jobStatePath = (session, home) => path.join(home, 'jobs', session.id, 'state.json');
+
+const isSession = s => Boolean(s) && typeof s === 'object' && typeof s.id === 'string' && typeof s.sessionId === 'string';
 
 function classify(session, home) {
   if (typeof session.pid === 'number') return 'live';
@@ -48,9 +51,11 @@ function classify(session, home) {
 function transcriptPath(session, home) {
   try {
     const state = JSON.parse(fs.readFileSync(jobStatePath(session, home), 'utf8'));
-    if (state.linkScanPath) return state.linkScanPath;
+    if (state && typeof state.linkScanPath === 'string' && state.linkScanPath) return state.linkScanPath;
   } catch (e) {
-    // No job state (an interactive session) or an unreadable one: use the slug.
+    // A missing job state is normal (an interactive session); anything else is
+    // worth a note. Either way the transcript is found by its slug.
+    if (e.code !== 'ENOENT') console.error(`session_prs: ${session.id}: unreadable job state, using the project path: ${e.message}`);
   }
   const slug = String(session.cwd || '').replace(/[^A-Za-z0-9]/g, '-');
   return path.join(home, 'projects', slug, `${session.sessionId}.jsonl`);
@@ -153,12 +158,17 @@ function sessionLine(session, status) {
 
 async function main() {
   if (!stateDir) throw new Error('STATE_DIR is not set');
-  const sessions = JSON.parse(fs.readFileSync(0, 'utf8').replace(/^﻿/, ''));
+  const input = fs.readFileSync(0, 'utf8');
+  const sessions = JSON.parse(input.startsWith(BOM) ? input.slice(1) : input);
   if (!Array.isArray(sessions)) throw new Error('stdin is not the array from `claude agents --json --all`');
   const scanFile = path.join(stateDir, 'scan.tsv');
   const offsets = readScan(scanFile);
 
   for (const session of sessions) {
+    if (!isSession(session)) {
+      console.error(`session_prs: skipping an entry without a string id and sessionId: ${JSON.stringify(session)}`);
+      continue;
+    }
     const status = classify(session, claudeHome);
     if (!status) continue;
     console.log(sessionLine(session, status));
