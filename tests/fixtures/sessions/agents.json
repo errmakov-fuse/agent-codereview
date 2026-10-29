@@ -1,0 +1,6 @@
+[
+  {"pid":100,"id":"aaaa1111","cwd":"C:\\w\\repo\\.claude\\worktrees\\HUB-1_x","kind":"interactive","startedAt":1700000000000,"sessionId":"aaaa1111-0000-4000-8000-000000000001","name":"HUB-1 fix thing"},
+  {"id":"bbbb2222","cwd":"C:\\w\\other","kind":"background","startedAt":1700000001000,"sessionId":"bbbb2222-0000-4000-8000-000000000002","name":"other work","status":"stopped"},
+  {"id":"cccc3333","cwd":"C:\\w\\gone","kind":"interactive","startedAt":1700000002000,"sessionId":"cccc3333-0000-4000-8000-000000000003"},
+  {"pid":400,"id":"dddd4444","cwd":"C:\\w\\nowhere","kind":"background","startedAt":1700000003000,"sessionId":"dddd4444-0000-4000-8000-000000000004"}
+]

@@ -1,0 +1,5 @@
+{"type":"pr-link","sessionId":"aaaa1111-0000-4000-8000-000000000001","prNumber":10,"prUrl":"https://github.com/Org/repo/pull/10","prRepository":"Org/repo","timestamp":"2026-01-01T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"please also look at https://github.com/Org/repo/pull/11 thanks"}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"see https://github.com/Org/repo/pull/12"}]}}
+{"type":"assistant","message":{"role":"assistant","content":"unrelated https://github.com/Org/repo/pull/14"}}
+{"type":"pr-link","sessionId":"x","prNumber":99,"prRepo
