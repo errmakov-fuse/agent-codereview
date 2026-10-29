@@ -28,7 +28,7 @@ if [ "$1 $2" = "--bg --resume" ]; then
     exit 1
   fi
   printf 'resume\t%s\t%s\n' "$3" "$4" >>"$STUB_DIR/calls.log"
-  pwd >>"$STUB_DIR/resume_cwd"
+  { pwd -W 2>/dev/null || pwd; } >>"$STUB_DIR/resume_cwd"
   if [ -e "$STUB_DIR/fail_resume" ]; then
     echo "error: no conversation found with session ID $3" >&2
     exit 1

@@ -63,6 +63,9 @@ sed -i "s|@HOME@|$HOME_DIR|" "$WORK/home/jobs/bbbb2222/state.json"
 echo '{"type":"pr-link","sessionId":"'"$BBBB"'","prNumber":6,"prUrl":"https://github.com/Org/other/pull/6","prRepository":"Org/other","timestamp":"2026-01-01T00:00:02Z"}' \
   >>"$WORK/home/elsewhere/bbbb.jsonl"
 mkdir "$WORK/home/sessions"
+# The folder bbbb2222 ran in; the fixture's C:\w\other does not exist.
+mkdir "$WORK/other"
+BBBB_CWD="$WORK_DIR/other"
 
 RANDOM_HEX="$(node -e "process.stdout.write(require('crypto').randomBytes(16).toString('hex'))")"
 case "$(uname -s)" in
@@ -112,10 +115,21 @@ fresh() {
   D="$STATE/pr_updates"
   mkdir -p "$STUB_DIR"
   cp "$WORK/home/agents.json" "$STUB_DIR/agents.json"
+  set_bbbb_cwd "$BBBB_CWD"
   CONF="$STATE/config.env"
   { cat "$ROOT/config.env"; echo 'MY_LOGINS="errmakov-fuse errmakov"'; printf '%s\n' "$@"; } >"$CONF"
   repo_open "10 $T1" "11 $T1"
   other_open "5 $T1" "6 $T1"
+}
+
+set_bbbb_cwd() {
+  node -e '
+    const [file, cwd] = process.argv.slice(1);
+    const fs = require("fs");
+    const agents = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const a of agents) if (a && a.id === "bbbb2222") a.cwd = cwd;
+    fs.writeFileSync(file, JSON.stringify(agents));
+  ' "$(cd "$STUB_DIR" && { pwd -W 2>/dev/null || pwd; })/agents.json" "$1"
 }
 
 # open_prs <repo> "<n> <updatedAt>"...
@@ -148,6 +162,7 @@ count_calls() { calls | grep -c "$1"; }
 resume_lines() { calls | grep "^resume"; }
 row() { awk -F'\t' -v repo="$2" -v n="$3" '$1 == repo && $2 == n' "$D/$1" 2>/dev/null; }
 seen_updated() { row seen.tsv "$1" "$2" | cut -f3; }
+seen_newest() { row seen.tsv "$1" "$2" | cut -f4; }
 # Enrols every watched PR silently, then forgets the calls it made.
 enrol() {
   run_pass
@@ -179,6 +194,7 @@ check "the inbox got the update message" \
   "$(last_message)"
 check "the inbox got the auth frame first" '{"type":"auth","token":"tok"}' "$(tail -n 2 "$RECEIVED" | head -n 1)"
 check "sent.log has one ok row" "1" "$(awk -F'\t' '$6 == "ok"' "$D/sent.log" | wc -l | tr -d ' ')"
+check "seen records the newest item handled" "$T2$T$F1" "$(seen_updated Org/repo 10)$T$(seen_newest Org/repo 10)"
 check "only PR 10 was fetched" "3 0" "$(count_calls '^gh api repos/Org/repo/[a-z]*/10/') $(count_calls '/11/')"
 check "the comments are asked for since the time of first sight" "1" \
   "$(count_calls "^gh api repos/Org/repo/issues/10/comments?since=20[0-9-]*T[0-9:]*Z&per_page=100$")"
@@ -188,12 +204,16 @@ run_pass
 check "nothing changed: no events" "" "$(out)"
 check "nothing changed: no gh api call" "0" "$(count_calls '^gh api')"
 
+# GitHub answers the reviews (no since) and anything edited since in full, so
+# the comment and a review from before the last pass come back too.
 repo_open "10 $T3" "11 $T1"
-answer comments_10.json "$(comment Errmakov-Fuse "$F2")"
+answer comments_10.json "$(comment samrent-infuse "$F1"),$(comment Errmakov-Fuse "$F2")"
+answer reviews_10.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
 before=$(received_lines)
 run_pass
-check "only my own comment: no events" "" "$(out)"
+check "only my own comment is new: no events (older items are not sent again)" "" "$(out)"
 check "only my own comment: seen moves to the new updatedAt" "$T3" "$(seen_updated Org/repo 10)"
+check "only my own comment: the newest handled item stays" "$F1" "$(seen_newest Org/repo 10)"
 sleep 0.3
 check "only my own comment: nothing sent" "$before" "$(received_lines)"
 
@@ -208,9 +228,32 @@ check "retired owner: one resume call with the whole message as one argument" \
   "$(calls | grep '^resume')"
 check "retired owner: NOTIFIED by resume" \
   "NOTIFIED Org/other#5 resume bbbb2222 a review requesting changes from samrent-infuse" "$(out)"
-check "retired owner: its folder is gone, so it is resumed from the repository root" "$ROOT" "$(cat "$STUB_DIR/resume_cwd")"
-check "retired owner: the fallback is logged" "1" "$(grep -c "resuming it from $ROOT" "$STATE/poll.log")"
+check "retired owner: resumed in the folder it ran in" "$BBBB_CWD" "$(cat "$STUB_DIR/resume_cwd")"
 check "retired owner: sent.log records the resume" "resume${T}ok" "$(awk -F'\t' '$2 == "Org/other"' "$D/sent.log" | cut -f5-6)"
+
+fresh
+enrol
+set_bbbb_cwd 'C:\w\gone-for-good'
+other_open "5 $T2" "6 $T1"
+answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
+run_pass
+check "retired owner whose folder is gone: not resumed" "" "$(resume_lines)"
+check "retired owner whose folder is gone: NOT_DELIVERED" \
+  "NOT_DELIVERED Org/other#5 bbbb2222 session folder is gone" "$(out)"
+check "retired owner whose folder is gone: pending with one attempt" "1" "$(row pending.tsv Org/other 5 | cut -f4)"
+check "retired owner whose folder is gone: logged" "1" "$(grep -c 'not resuming session .*folder is gone' "$STATE/poll.log")"
+run_pass
+check "folder still gone next pass: WATCH_GAVE_UP, still no resume" "WATCH_GAVE_UP Org/other#5 bbbb2222|" \
+  "$(out)|$(resume_lines)"
+
+# Review Focus 4: quotes in the message reach claude intact, as one argument.
+fresh
+enrol
+printf 'Org/other\t5\t%s\t0\t%s\n' "$BBBB" "1 comment from o'brien about \"the loop\"" >"$D/pending.tsv"
+run_pass
+check "a message with quotes is resumed as one intact argument" \
+  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: 1 comment from o'brien about \"the loop\". Check it out whether any action is needed and proceed if it is." \
+  "$(calls | grep '^resume')"
 
 fresh
 enrol
@@ -331,13 +374,39 @@ check "merged, owner retired: closed.txt has it" "1" "$(row closed.txt Org/other
 
 fresh
 open_prs Org/repo "10 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
-echo '{"state":"MERGED","mergedBy":{"login":"samrent-infuse"}}' >"$STUB_DIR/pr_view_11.json"
+echo '{"state":"CLOSED","mergedBy":null}' >"$STUB_DIR/pr_view_11.json"
+echo '[{"event":"closed","actor":{"login":"samrent-infuse"}}]' >"$STUB_DIR/timeline_11.json"
 before=$(received_lines)
 run_pass
-check "already merged when first seen: no event" "" "$(out)"
+check "already closed when first seen: no event" "" "$(out)"
 sleep 0.3
-check "already merged when first seen: no message" "$before" "$(received_lines)"
-check "already merged when first seen: closed.txt has it" "1" "$(row closed.txt Org/repo 11 | wc -l | tr -d ' ')"
+check "already closed when first seen: no message" "$before" "$(received_lines)"
+check "already closed when first seen: closed.txt has it, watch.tsv not" "1|" \
+  "$(row closed.txt Org/repo 11 | wc -l | tr -d ' ')|$(row watch.tsv Org/repo 11)"
+check "already closed when first seen, the open list complete: no pr view, no timeline call" "0 0" \
+  "$(count_calls 'pr view') $(count_calls 'timeline')"
+
+# A full open list (MAX_OPEN_PRS) may leave out open PRs, so a missing one is
+# looked up; one never seen open still needs no timeline call.
+full_list() {
+  local fillers=() i
+  for i in $(seq 2000 2094); do fillers+=("$i $T1"); done
+  open_prs Org/repo "$@" "14 $T1" "15 $T1" "18 $T1" "30 $T1" "${fillers[@]}"
+}
+fresh
+full_list "10 $T1"
+echo '{"state":"CLOSED","mergedBy":null}' >"$STUB_DIR/pr_view_11.json"
+echo '[{"event":"closed","actor":{"login":"samrent-infuse"}}]' >"$STUB_DIR/timeline_11.json"
+run_pass
+check "full open list, closed when first seen: one pr view, no timeline call" "1 0" \
+  "$(count_calls 'pr view 11') $(count_calls 'timeline')"
+check "full open list, closed when first seen: closed.txt has it" "1" "$(row closed.txt Org/repo 11 | wc -l | tr -d ' ')"
+fresh
+full_list "10 $T1"
+echo '{"state":"OPEN","mergedBy":null}' >"$STUB_DIR/pr_view_11.json"
+run_pass
+check "full open list, open beyond it: still watched, not closed" "1|" \
+  "$(row watch.tsv Org/repo 11 | wc -l | tr -d ' ')|$(row closed.txt Org/repo 11)"
 
 # --- A repository gh cannot read (Review Focus 2) -----------------------------------------
 fresh
@@ -350,10 +419,52 @@ answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
 before=$(received_lines)
 run_pass
 wait_for_received_lines $((before + 2))
-check "unreadable repository: only the readable one has events" \
+check "unresolvable repository: only the readable one has events" \
   "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
-check "unreadable repository: the log names it" "yes" "$(grep -q 'Org/other' "$STATE/poll.log" && echo yes)"
-check "unreadable repository: nothing is resumed" "" "$(resume_lines)"
+check "unresolvable repository: one log line names it" "1" \
+  "$(grep -c 'cannot resolve the repository Org/other' "$STATE/poll.log")"
+check "unresolvable repository: nothing is resumed" "" "$(resume_lines)"
+check "unresolvable repository: its watch rows are dropped" "" "$(awk -F'\t' '$1 == "Org/other"' "$D/watch.tsv")"
+check "unresolvable repository: its PRs are in closed.txt" "5 6" \
+  "$(awk -F'\t' '$1 == "Org/other" { print $2 }' "$D/closed.txt" | sort | tr '\n' ' ' | sed 's/ $//')"
+
+fresh
+enrol
+touch "$STUB_DIR/flaky_Org_other"
+repo_open "10 $T2" "11 $T1"
+other_open "5 $T2" "6 $T1"
+answer comments_10.json "$(comment samrent-infuse "$F1")"
+answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
+run_pass
+check "gh pr list fails for a while: the other repository is processed, no event for this one" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
+check "gh pr list fails for a while: its watch rows are kept" "5 6" \
+  "$(awk -F'\t' '$1 == "Org/other" { print $2 }' "$D/watch.tsv" | sort | tr '\n' ' ' | sed 's/ $//')"
+check "gh pr list fails for a while: logged" "1" "$(grep -c 'listing the open PRs of Org/other failed' "$STATE/poll.log")"
+
+# #10 comes before #11 in watch.tsv.
+fresh
+enrol
+open_prs Org/repo "11 $T2" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+touch "$STUB_DIR/missing_10"
+answer comments_11.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "a PR GitHub cannot find does not hold up the next one" \
+  "NOTIFIED Org/repo#11 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
+check "a PR GitHub cannot find is dropped" "|1" "$(row watch.tsv Org/repo 10)|$(row closed.txt Org/repo 10 | wc -l | tr -d ' ')"
+check "a PR GitHub cannot find is logged once" "1" "$(grep -c 'Org/repo#10 does not exist' "$STATE/poll.log")"
+
+fresh
+enrol
+open_prs Org/repo "11 $T2" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+touch "$STUB_DIR/fail_view_10"
+answer comments_11.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "a PR gh fails to read does not hold up the next one" \
+  "NOTIFIED Org/repo#11 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
+check "a PR gh fails to read stays watched, not closed" "1|" \
+  "$(row watch.tsv Org/repo 10 | wc -l | tr -d ' ')|$(row closed.txt Org/repo 10)"
+check "a PR gh fails to read is logged" "1" "$(grep -c 'reading Org/repo#10 from GitHub failed' "$STATE/poll.log")"
 
 # --- Dry run and backfill ---------------------------------------------------------------
 fresh

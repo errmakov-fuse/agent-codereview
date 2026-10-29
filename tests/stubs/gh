@@ -9,8 +9,12 @@
 #   gh api repos/O/R/pulls/<n>/reviews?...       reviews_<n>.json
 #   gh api repos/O/R/issues/<n>/timeline?...     timeline_<n>.json
 #
-# A missing file answers []. A file named fail_O_R makes every call on O/R fail
-# the way gh does for a repository it cannot read.
+# A missing file answers []. Failures, each switched on by a file in $STUB_DIR:
+#
+#   fail_O_R        every call on O/R fails as for a repository that does not exist
+#   flaky_O_R       every call on O/R fails as for a GitHub outage (HTTP 502)
+#   missing_<n>     gh pr view <n> fails as for a PR that does not exist
+#   fail_view_<n>   gh pr view <n> fails with HTTP 502
 
 echo "gh $*" >>"$STUB_DIR/calls.log"
 
@@ -43,7 +47,19 @@ if [ -z "$file" ]; then
   exit 1
 fi
 if [ -e "$STUB_DIR/fail_${repo//\//_}" ]; then
-  echo "gh: Could not resolve to a Repository with the name '$repo'." >&2
+  echo "GraphQL: Could not resolve to a Repository with the name '$repo'. (repository)" >&2
+  exit 1
+fi
+if [ -e "$STUB_DIR/flaky_${repo//\//_}" ]; then
+  echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/missing_$3" ]; then
+  echo "GraphQL: Could not resolve to a PullRequest with the number of $3. (repository.pullRequest)" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/fail_view_$3" ]; then
+  echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
   exit 1
 fi
 if [ -f "$STUB_DIR/$file" ]; then

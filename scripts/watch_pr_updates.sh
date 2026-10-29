@@ -12,13 +12,17 @@
 #   4. A watched PR gone from the open list gets one closing notice, only when
 #      its owner is live and the merger or closer is not one of MY_LOGINS, and
 #      leaves the watch list. One already closed when first seen gets no notice.
+#      So does a PR, or a whole repository, that GitHub says does not exist.
 #
 # A live session gets the message in its inbox (send_to_session.js). A retired
-# background session is woken with `claude --bg --resume <session id> <message>`,
-# at most PR_UPDATE_MAX_RESUMES_PER_PASS a pass and once per session a pass,
-# and only while PR_UPDATE_RESUME_RETIRED is on; otherwise its update waits in
-# pending.tsv. At most PR_UPDATE_MAX_PER_PR_PER_DAY messages per PR a day; a
-# message that fails twice is dropped.
+# background session is woken with `claude --bg --resume <session id> <message>`
+# from the folder it ran in, at most PR_UPDATE_MAX_RESUMES_PER_PASS a pass and
+# once per session a pass, and only while PR_UPDATE_RESUME_RETIRED is on;
+# otherwise its update waits in pending.tsv. A session whose folder is gone is
+# never resumed: that counts as a failed delivery. At most
+# PR_UPDATE_MAX_PER_PR_PER_DAY messages per PR a day; a message that fails twice
+# is dropped. A failed gh pr list skips its repository for the pass; any other
+# gh failure skips only that PR.
 #
 # Prints one line per event, which windows/poll.ps1 turns into notifications:
 #   NOTIFIED <owner/repo>#<n> <inbox|resume> <session short id> <summary>
@@ -152,15 +156,18 @@ can_resume() {
 }
 
 # How a message of this kind reaches this session now: inbox, resume, wait
-# (an update stays pending) or skip (a closing notice for a retired session).
+# (an update stays pending), nofolder (it would be resumed, but the folder it
+# ran in is gone, and waking it anywhere else would let it loose in an
+# unrelated repository) or skip (a closing notice for a retired session).
 route_for() {
-  local owner="$1" kind="$2"
+  local owner="$1" kind="$2" cwd
   if [ "$(session_field "$owner" status)" = live ]; then
     echo inbox
   elif [ "$kind" != update ]; then
     echo skip
   elif can_resume "$owner"; then
-    echo resume
+    cwd=$(session_field "$owner" cwd)
+    if [ -n "$cwd" ] && [ -d "$cwd" ]; then echo resume; else echo nofolder; fi
   else
     echo wait
   fi
@@ -177,14 +184,11 @@ send_inbox() {
 }
 
 # Wakes a retired session with the message as its next turn, from the folder it
-# ran in. The message is one argument; nothing here passes through a shell.
+# ran in (route_for has checked it exists). The message is one argument;
+# nothing here passes through a shell.
 send_resume() {
   local owner="$1" message="$2" cwd out
   cwd=$(session_field "$owner" cwd)
-  if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
-    log "the folder of session $owner is gone ($cwd); resuming it from $ROOT"
-    cwd="$ROOT"
-  fi
   if out=$(cd "$cwd" && claude --bg --resume "$owner" "$message" </dev/null 2>&1); then
     log "resumed session $owner: ${out//$'\n'/ | }"
     return 0
@@ -265,6 +269,10 @@ deliver() {
       pending_set "$repo" "$n" "$owner" "${attempts:-0}" "$summary"
       log "$repo#$n waits: session $owner is retired and cannot be resumed in this pass"
       ;;
+    nofolder)
+      log "$repo#$n: not resuming session $owner, its folder is gone ($(session_field "$owner" cwd))"
+      count_failure "$repo" "$n" "$owner" "$(session_field "$owner" short)" "$summary" "session folder is gone"
+      ;;
     skip) log "$repo#$n $summary; session $owner is retired, so it gets no notice" ;;
   esac
 }
@@ -322,6 +330,23 @@ check_pr() {
   fetch_updates "$repo" "$n" "$updated" "${seen#*$'\t'}"
 }
 
+# Runs gh with its stderr going to the log and to $scratch/gh_err, where the
+# caller can see why it failed.
+gh_logged() {
+  local status
+  gh "$@" 2>"$scratch/gh_err" </dev/null
+  status=$?
+  cat "$scratch/gh_err" >>"$LOG"
+  return "$status"
+}
+
+# Takes a PR off the watch list for good, without a notice.
+forget_pr() {
+  closed_add "$1" "$2"
+  watch_drop_pr "$1" "$2"
+  pending_drop "$1" "$2"
+}
+
 # Who closed a PR: the actor of its last "closed" timeline event, or nothing.
 closer_of() {
   local timeline
@@ -329,53 +354,99 @@ closer_of() {
   printf '%s' "$timeline" | node -e "$PARSE_CLOSER" 2>>"$LOG" || echo ""
 }
 
-# A watched PR missing from the open list. Fails only when gh does.
-settle_closed() {
-  local repo="$1" n="$2" view state merger kind closer
-  if ! closed_has "$repo" "$n"; then
-    view=$(gh pr view "$n" --repo "$repo" --json state,mergedBy 2>>"$LOG" </dev/null) || return 1
-    view=$(printf '%s' "$view" | node -e "$PARSE_PR_VIEW" 2>>"$LOG")
-    state="${view%%$'\t'*}"
-    merger="${view#*$'\t'}"
-    case "$state" in
-      OPEN) return 0 ;; # beyond the first MAX_OPEN_PRS of the open list
-      MERGED) kind=merged closer="$merger" ;;
-      CLOSED)
-        kind=closed
-        closer=$(closer_of "$repo" "$n") || return 1
-        ;;
-      *)
-        log "$repo#$n has state '$state'; looking again next pass"
-        return 0
-        ;;
-    esac
-    if [ -n "$(seen_get "$repo" "$n")" ] && ! is_mine "$closer"; then
-      deliver "$repo" "$n" "$kind${closer:+ by $closer}" "$kind"
-    fi
-    closed_add "$repo" "$n"
+# "<STATE>\t<merged by>" of a PR. Status 2 when GitHub says there is no such PR,
+# 1 when gh fails otherwise.
+pr_state() {
+  local view
+  if ! view=$(gh_logged pr view "$2" --repo "$1" --json state,mergedBy); then
+    grep -qiE 'could not resolve|no pull requests? found' "$scratch/gh_err" && return 2
+    return 1
   fi
-  watch_drop_pr "$repo" "$n"
-  pending_drop "$repo" "$n"
+  printf '%s' "$view" | node -e "$PARSE_PR_VIEW" 2>>"$LOG"
 }
 
-# One gh pr list for a repository, then each of its watched PRs. A gh failure
-# skips the rest of the repository for this pass.
+# The closing notice for a merged or closed PR, unless one of MY_LOGINS did it.
+notify_closed() {
+  local repo="$1" n="$2" state="$3" closer="$4" kind=merged
+  if [ "$state" = CLOSED ]; then
+    kind=closed
+    closer=$(closer_of "$repo" "$n") || return 1
+  fi
+  is_mine "$closer" && return 0
+  deliver "$repo" "$n" "$kind${closer:+ by $closer}" "$kind"
+  return 0
+}
+
+# A watched PR missing from the open list; <complete> is 1 when that list held
+# every open PR. A PR never seen open gets no notice, and with a complete list
+# needs no call at all. Fails only when gh does.
+settle_closed() {
+  local repo="$1" n="$2" complete="$3" seen view status
+  seen=$(seen_get "$repo" "$n")
+  if closed_has "$repo" "$n" || { [ -z "$seen" ] && [ "$complete" -eq 1 ]; }; then
+    forget_pr "$repo" "$n"
+    return 0
+  fi
+  view=$(pr_state "$repo" "$n")
+  status=$?
+  if [ "$status" -eq 2 ]; then
+    log "$repo#$n does not exist on GitHub; no longer watched"
+    forget_pr "$repo" "$n"
+    return 0
+  fi
+  [ "$status" -eq 0 ] || return 1
+  case "${view%%$'\t'*}" in
+    OPEN) return 0 ;; # beyond the first MAX_OPEN_PRS of the open list
+    MERGED | CLOSED) ;;
+    *)
+      log "$repo#$n has state '${view%%$'\t'*}'; looking again next pass"
+      return 0
+      ;;
+  esac
+  if [ -n "$seen" ]; then
+    notify_closed "$repo" "$n" "${view%%$'\t'*}" "${view#*$'\t'}" || return 1
+  fi
+  forget_pr "$repo" "$n"
+}
+
+watched_in() {
+  watch_prs | awk -F'\t' -v repo="$1" '$1 == repo { print $2 }'
+}
+
+# "<n>\t<updatedAt>" for each open PR of a repository. Status 2 when GitHub
+# says there is no such repository, 1 when gh fails otherwise.
+open_prs_of() {
+  local list
+  if ! list=$(gh_logged pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt); then
+    grep -q 'Could not resolve to a Repository' "$scratch/gh_err" && return 2
+    return 1
+  fi
+  printf '%s' "$list" | node -e "$PARSE_PR_LIST" 2>>"$LOG"
+}
+
+# One gh pr list for a repository, then each of its watched PRs. Only a failed
+# list skips the repository; a PR that cannot be read waits for the next pass.
 check_repo() {
-  local repo="$1" list open n updated
-  if ! list=$(gh pr list --repo "$repo" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt 2>>"$LOG" </dev/null) ||
-    ! open=$(printf '%s' "$list" | node -e "$PARSE_PR_LIST" 2>>"$LOG"); then
+  local repo="$1" open status complete=0 n updated
+  open=$(open_prs_of "$repo")
+  status=$?
+  if [ "$status" -eq 2 ]; then
+    log "GitHub cannot resolve the repository $repo; its PRs are no longer watched"
+    for n in $(watched_in "$repo"); do forget_pr "$repo" "$n"; done
+    return 0
+  elif [ "$status" -ne 0 ]; then
     log "listing the open PRs of $repo failed; its PRs wait for the next pass"
     return 0
   fi
-  for n in $(watch_prs | awk -F'\t' -v repo="$repo" '$1 == repo { print $2 }'); do
+  [ "$(grep -c . <<<"$open")" -lt "$MAX_OPEN_PRS" ] && complete=1
+  for n in $(watched_in "$repo"); do
     updated=$(awk -F'\t' -v n="$n" '$1 == n { print $2; exit }' <<<"$open")
     if [ -z "$updated" ]; then
-      settle_closed "$repo" "$n" && continue
+      settle_closed "$repo" "$n" "$complete" && continue
     else
       check_pr "$repo" "$n" "$updated" && continue
     fi
-    log "reading $repo#$n from GitHub failed; the rest of $repo waits for the next pass"
-    return 0
+    log "reading $repo#$n from GitHub failed; trying it again next pass"
   done
 }
 
