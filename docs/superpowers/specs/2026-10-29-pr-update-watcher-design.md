@@ -44,8 +44,9 @@ Owner's wording: the service listens on PRs "mentioned in active sessions". Deci
 
 | Session | Active? | How it is told |
 |---|---|---|
-| Live: listed by `claude agents --json` with a pid, idle or busy | yes | message to its inbox; a busy session gets it as its next turn |
-| Retired: listed by `claude agents --json --all`, no pid, job state in `~/.claude/jobs/<id>/` | yes | resumed with the message as its first turn (owner's decision) |
+| Live, background or interactive: listed by `claude agents --json` with a pid, idle or busy | yes | message to its inbox; a busy session gets it as its next turn |
+| Retired background session: listed by `claude agents --json --all`, no pid, job state in `~/.claude/jobs/<id>/` | yes | resumed with the message as its first turn (owner's decision) |
+| Interactive session the owner has closed: transcript, no pid, no job state | no | its PRs are dropped; the owner's sessions are all background sessions today, and resuming a closed terminal session as an unattended background one would be a surprise |
 | Deleted with `claude rm`, or no job state and no transcript | no | its PRs are dropped from the watch list |
 | A `-p` review run of this repository (`state/runs/`) | no | never watched; these are not the owner's working sessions |
 
@@ -65,7 +66,7 @@ When several sessions name one PR (the owner forks sessions, and forks share his
 
 Comments on the conversation tab, review comments on the diff, and reviews (approve, request changes, comment), from any login not in `MY_LOGINS`. Comments by the owner's logins are ignored, which is also what stops the loop: the session posts replies as `REVIEW_AS`, and those never come back as updates.
 
-Also one final notice when the PR is merged or closed, after which the PR leaves the watch list. My call: the session usually has a worktree and a branch to clean up, and the notice costs one message.
+Also one final notice when the PR is merged or closed, after which the PR leaves the watch list. My call: the session usually has a worktree and a branch to clean up. The notice is cheap only for a live session, so it goes through the inbox only: a retired session is never resumed for a merge or close, and no notice is sent when the merger or closer is one of `MY_LOGINS` (the owner or the session itself did it and already knows). The PR leaves the watch list either way.
 
 Several updates on one PR in one pass make one message.
 
@@ -113,6 +114,8 @@ Plain text files, one record per line, read and written with the same `awk` and 
 | `closed.txt` | PR merged or closed and told | repo, number, time |
 
 `watch.tsv` is rebuilt each pass from the sessions (a PR appears when its session does, leaves when the session is deleted or the PR is closed); the other files are append-and-rewrite like the reviewer's state.
+
+**Baseline for a PR seen for the first time** (my call): its `seen.tsv` row starts at the moment it is first seen, so only updates after that count. A PR that is already merged or closed when first seen goes straight to `closed.txt` without a notice. On the first pass after install this means the eighteen known sessions and their PRs are enrolled silently, and no session is resumed for a review that was already waiting. For that backlog there is `watch_pr_updates.sh --backfill`, run by hand: it treats every unanswered review or comment on a watched open PR as new, prints what it would send under `--dry-run`, and sends without it. The caps apply to a backfill like to a pass.
 
 ### The pass
 
