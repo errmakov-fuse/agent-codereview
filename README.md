@@ -116,7 +116,7 @@ A teammate answers a PR hours after the Claude Code session that opened it went 
 
 When several sessions name one PR, one gets the message: the best source wins, then a live session over a retired one, then the one started last.
 
-**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (always `MY_LOGINS`, so a session's own replies never wake it, plus `dependabot[bot]` by default). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when the merger or closer is one of `MY_LOGINS`. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
+**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (always `MY_LOGINS`, so a session's own replies never wake it, plus `dependabot[bot]` and `infusemedia`, the account that posts the automated scan reports, in the shipped `config.env`). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when the merger or closer is one of `MY_LOGINS`. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
 
 **How a session is told.**
 
