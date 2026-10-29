@@ -4,6 +4,12 @@
 #
 # Output, one line per PR that needs action:
 #   MINE <n>                                 my PR, nobody requested, nobody else reviewed
+#   STALLED <n> <head> <reviewer> <at>       my PR that still needs an approval, with no
+#                                            review pending: others reviewed it, but only
+#                                            with comments (or their approval went stale),
+#                                            and nobody is requested. <reviewer> and <at>
+#                                            are the last such review; poll.sh waits
+#                                            STALLED_AFTER_MINUTES from <at>.
 #   THEIRS <n>                               a watched author's PR with no review from me
 #   REREVIEW <n> <head> <reason> <reviewed>  a watched author's PR that moved past my review
 #   CAPPED <n> <head> <rounds>               would be a changes_requested re-review, but I
@@ -47,9 +53,17 @@ def checks_settled:
 | [$pr.reviews[] | (.author.login // "")] as $reviewers
 | ([$pr.reviewRequests[] | (.login // "")] | any(. as $login | $me | any(. == $login))) as $asked
 | if $me | any(. == $author) then
-    (if ($pr.isDraft | not) and ($pr.reviewRequests | length) == 0 and (($reviewers - $me) | length) == 0
-     then "MINE \($pr.number)"
-     else empty end)
+    ([$pr.reviews[] | select((.author.login // "") as $login | $me | any(. == $login) | not)]
+     | sort_by(.submittedAt)) as $others
+    | (if ($pr.isDraft | not) and ($pr.reviewRequests | length) == 0 and ($others | length) == 0
+       then "MINE \($pr.number)"
+       # GitHub says the PR still needs an approval, nobody is asked for one, and
+       # a change request (the author's move) is not what holds it.
+       elif ($pr.isDraft | not) and ($pr.reviewRequests | length) == 0 and ($others | length) > 0
+            and ($pr.reviewDecision // "") == "REVIEW_REQUIRED"
+       then ($others | last) as $last
+            | "STALLED \($pr.number) \($pr.headRefOid) \($last.author.login // "unknown") \($last.submittedAt)"
+       else empty end)
   elif $watched | any(. == $author) then
     if $pr.isDraft and ($review_drafts | not) and ($asked | not) then
       empty

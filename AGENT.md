@@ -12,6 +12,7 @@ Nothing here needs a long-lived session any more. A Windows scheduled task runs 
 | Reviewing account | `REVIEW_AS` | Requested as reviewer on watched PRs; reviews are posted from it, so it must be the active `gh` account. |
 | Watched authors | `WATCHED_AUTHORS` | Their new PRs get a code review. |
 | My reviewer | `MY_PR_REVIEWER` | Requested on my PRs that have no reviewer. |
+| Fallback reviewer | `STALLED_PR_REVIEWER` | Requested on my PR that still needs an approval when its reviews are only comments and nobody is requested (after `STALLED_AFTER_MINUTES`). Empty means I only get a notification. |
 
 - A watched author's PR with no review from me gets a first review.
 - It gets a re-review when its head has moved past the commit of my last review and either I requested changes, my approval was dismissed (`REREVIEW_DISMISSED_APPROVALS`), or my review was requested again. The first two wait for `REREVIEW_SETTLE_SECONDS` of a quiet head and for green CI checks; a re-request acts at once.
@@ -70,6 +71,7 @@ To watch a PR the watcher forgot (a row in `closed.txt`): delete that row, delet
 | `state/attempts.txt` | Runs per key; at `MAX_ATTEMPTS` the PR is left alone and listed in `state/gave_up.txt`. Delete its lines to let it be tried again. |
 | `state/handled_prs.txt` | `own-<n>`: my PRs that got their reviewer. |
 | `state/capped.txt` | PRs that reached `MAX_CHANGE_ROUNDS` and got the one comment saying so. |
+| `state/stalled.txt` | `<n>@<head>`: my PRs reported as waiting for nobody at that head. |
 | `state/pr_updates/watch.tsv` | Which session watches which PR: repo, number, session id, source (`created`, `linked`, `mentioned`), first seen. Rows are added as new transcript lines are scanned (`scan.tsv` remembers how far each was read) and dropped when their session is gone or the PR is forgotten. |
 | `state/pr_updates/seen.tsv` | Per PR: the `updatedAt` last looked at and the newest comment or review already handled. No row means the PR is enrolled silently. |
 | `state/pr_updates/sent.log` | One line per message: time, repo, number, session id, `inbox` or `resume`, `ok` or `failed`, summary. `ok` for an inbox message means written, not delivered. The daily cap counts only the `ok` rows of the last 24 hours. |

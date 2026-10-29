@@ -1,6 +1,6 @@
 # agent-codereview
 
-Reviews your teammates' pull requests for you with Claude Code. It requests you as reviewer on their new PRs, reviews each one with a reviewer subagent briefed from the superpowers `requesting-code-review` template, and posts the findings as an approval or a change request. When a PR it asked changes on gets new commits, it reviews it again. It also puts a reviewer on your own PRs when they have none. A second part, the PR update watcher, tells the Claude Code session that opened one of your PRs when a teammate comments on it or reviews it.
+Reviews your teammates' pull requests for you with Claude Code. It requests you as reviewer on their new PRs, reviews each one with a reviewer subagent briefed from the superpowers `requesting-code-review` template, and posts the findings as an approval or a change request. When a PR it asked changes on gets new commits, it reviews it again. It also puts a reviewer on your own PRs when they have none, and tells you when one of your PRs still needs an approval but nobody is asked for one. A second part, the PR update watcher, tells the Claude Code session that opened one of your PRs when a teammate comments on it or reviews it.
 
 ## How it runs
 
@@ -146,6 +146,17 @@ bash scripts/watch_pr_updates.sh --backfill            # send it
 `--dry-run` works on a throwaway copy of the ledger and prints each event as `DRY_RUN <event>`. A first dry run prints nothing, because every PR is enrolled silently; `--backfill --dry-run` shows what the waiting reviews would send. `--backfill` makes the comments and reviews already on a newly seen PR count as new, instead of enrolling it silently. Run it once after install to hand your sessions the reviews that are waiting; the caps apply. It does not touch a PR seen before.
 
 The ledger is `state/pr_updates/`: which session owns which PR, what was handled, sent and is waiting. `AGENT.md` lists its files.
+
+## Your own PRs that wait for nobody
+
+A reviewer can leave only comments ("Verdict: comment. Nothing blocks the merge.") and never approve. If the session that owns the PR has nothing to change, nobody re-requests a review, and the PR sits unapproved with no review pending. #1416 waited like this until a second reviewer was asked by hand.
+
+Each pass looks for your ready PRs that GitHub says still need a review, with no reviewer requested, whose last review is at least `STALLED_AFTER_MINUTES` (30) old. Once per PR head you get a notification, "PR #n is waiting for nobody". If `STALLED_PR_REVIEWER` is set, that login is requested too. The reviewer who only commented is not asked again, because it would comment again.
+
+```bash
+STALLED_PR_REVIEWER=""            # notify only (default)
+STALLED_PR_REVIEWER="MaxPyrko"    # also request this reviewer
+```
 
 ## PRs it ignores
 

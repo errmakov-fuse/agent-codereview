@@ -15,6 +15,8 @@
 # Prints one line per event, which windows/poll.ps1 turns into notifications:
 #   REQUESTED <reviewer> #<n>       STARTED <key>       GAVE_UP <key>
 #   CAPPED #<n> <rounds>            a PR past MAX_CHANGE_ROUNDS got its one comment
+#   STALLED #<n> <last reviewer> <requested login, or ->
+#                                   my PR needs an approval and nobody is asked for one
 #   and the POSTED / NOT_POSTED / FAILED line of each run (see run_review.sh).
 # Prints nothing when there was nothing to do.
 #
@@ -60,6 +62,31 @@ while read -r kind number head reason reviewed; do
       else
         log "could not request $MY_PR_REVIEWER on #$number"
       fi
+      continue
+      ;;
+    STALLED)
+      # Once per PR head: a new push is the author moving, and may change the picture.
+      last_reviewer="$reason"
+      last_at="$reviewed"
+      grep -qx "$number@$head" "$STALLED" && continue
+      age=$(($(date +%s) - $(date -d "$last_at" +%s 2>/dev/null || date +%s)))
+      [ "$age" -ge $((${STALLED_AFTER_MINUTES:-30} * 60)) ] || continue
+      fallback="${STALLED_PR_REVIEWER:-}"
+      if [ "$dry_run" -eq 1 ]; then
+        echo "DRY_RUN would report #$number as stalled (last review by $last_reviewer${fallback:+, request $fallback})"
+        continue
+      fi
+      requested="-"
+      if [ -n "$fallback" ] && [ "$fallback" != "$last_reviewer" ]; then
+        if request_reviewer "$number" "$fallback" >>"$LOG" 2>&1; then
+          requested="$fallback"
+        else
+          log "could not request $fallback on stalled #$number"
+        fi
+      fi
+      echo "$number@$head" >>"$STALLED"
+      log "stalled #$number at ${head:0:7}: last review by $last_reviewer at $last_at, requested $requested"
+      echo "STALLED #$number $last_reviewer $requested"
       continue
       ;;
     CAPPED)
