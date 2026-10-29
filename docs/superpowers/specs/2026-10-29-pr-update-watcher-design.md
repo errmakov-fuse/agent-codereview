@@ -181,3 +181,20 @@ Run on 2026-10-29 against Claude Code 2.1.312 on this machine, with a throwaway 
 - `claude stop` and `claude rm` by name answered `No job matching` for a session with a pending permission prompt; by short id both worked. Task 4 and Task 6 should address sessions by short id.
 - `claude logs` prints raw terminal output with ANSI escapes; strip them before matching text.
 - The label of an accepted inbox message was not observed, since none was accepted.
+
+### Live session fallback: claude -p --resume
+
+Second throwaway haiku session `watcher-spike` (short id `fa37c4e5`, full id `fa37c4e5-e095-475d-a449-8db4447d7a93`), idle with pid 7304. From a different directory (the spike scratch folder), with the session running:
+
+- `claude -p --resume fa37c4e5-e095-475d-a449-8db4447d7a93 "spike three"` returned after about 2 seconds with exit code 1, nothing on stdout, and on stderr: `Error: That session is running in the background (fa37c4e5). Run \`claude attach fa37c4e5\` to open it, or \`claude stop fa37c4e5\` first to resume it here. Add --fork-session to branch off a copy instead.`
+- No `note:` line. `claude agents --json --all` still showed one row for the session (same id, pid 7304, idle). `claude logs fa37c4e5` after 25 seconds showed no `spike three`: the running session never received the prompt.
+- The `--output-format json` repeat was not run, since the first call delivered nothing. `--fork-session` was not tried: it makes a copy, which is not delivery to the owner's session.
+- So the documented claim that `-p --resume` posts into a running background session is wrong for 2.1.312. It refuses for a live session and works only for a stopped one (as in finding 2, via `--bg --resume`).
+
+Task 4 routes this leaves:
+
+1. Live session, inbox frame: delivered only if the owner sets `crossSessionInbound: "accept"` in their settings. This is left to the owner; the spike did not change any setting.
+2. Live session without that setting: no automatic delivery path was found. The held frame appears to the owner as a prompt in the session; the watcher can send the frame anyway and toast the PR as well, or toast only.
+3. Stopped session: `claude --bg --resume <full session id> "<message>"` (finding 2).
+
+`claude -p --resume` supports neither live route; Task 4 must not switch to it for live sessions.
