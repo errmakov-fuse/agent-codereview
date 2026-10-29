@@ -55,6 +55,9 @@ log() {
   echo "$(date -u +%FT%TZ) $*" >>"$LOG"
 }
 
+# Paths as Windows tools and prompts expect them (C:/...), where cygpath exists.
+winpath() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
+
 # "a b" -> ["a","b"]. Logins end up inside a jq filter, so anything that is not a
 # plain GitHub login is refused.
 json_array() {
