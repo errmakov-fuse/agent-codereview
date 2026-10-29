@@ -19,7 +19,11 @@ RUNS_DIR="$STATE_DIR/runs"
 REVIEWS_LOG="$STATE_DIR/reviews.log"
 CAPPED="$STATE_DIR/capped.txt"
 LAST_POLL="$STATE_DIR/last_poll"
+PR_UPDATES_DIR="$STATE_DIR/pr_updates"
 MAX_OPEN_PRS=100
+# The name claude_lean.sh gives every review run, by which the PR update watcher
+# knows them and never watches them.
+REVIEW_SESSION_NAME=agent-codereview-review
 
 load_config() {
   if [ ! -f "$CONFIG" ]; then
@@ -37,13 +41,27 @@ load_config() {
       return 1
     fi
   done
-  mkdir -p "$STATE_DIR" "$RUNNING_DIR" "$RUNS_DIR" &&
+  # The PR update settings may be left out of config.env.
+  : "${PR_UPDATE_ENABLED:=true}"
+  # MY_LOGINS are always ignored, whatever the setting holds: a session that
+  # comments on its own PR must not be woken by its own words, again and again.
+  PR_UPDATE_IGNORE_LOGINS="$MY_LOGINS ${PR_UPDATE_IGNORE_LOGINS:-dependabot[bot]}"
+  : "${PR_UPDATE_MAX_PER_PR_PER_DAY:=6}"
+  : "${PR_UPDATE_MAX_RESUMES_PER_PASS:=2}"
+  : "${PR_UPDATE_RESUME_RETIRED:=true}"
+  for name in PR_UPDATE_MAX_PER_PR_PER_DAY PR_UPDATE_MAX_RESUMES_PER_PASS; do
+    case "${!name}" in *[!0-9]*) echo "$name must be a number" >&2; return 1 ;; esac
+  done
+  mkdir -p "$STATE_DIR" "$RUNNING_DIR" "$RUNS_DIR" "$PR_UPDATES_DIR" &&
     touch "$HANDLED" "$LOG" "$FIRST_SEEN" "$ATTEMPTS" "$GAVE_UP" "$REVIEWS_LOG" "$CAPPED"
 }
 
 log() {
   echo "$(date -u +%FT%TZ) $*" >>"$LOG"
 }
+
+# Paths as Windows tools and prompts expect them (C:/...), where cygpath exists.
+winpath() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
 
 # "a b" -> ["a","b"]. Logins end up inside a jq filter, so anything that is not a
 # plain GitHub login is refused.

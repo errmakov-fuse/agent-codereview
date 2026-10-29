@@ -16,6 +16,8 @@
 #   --tools                  only the tools a review needs
 #   --strict-mcp-config, --no-chrome, --disable-slash-commands
 #                            no MCP servers, browser or skills
+#   --name                   REVIEW_SESSION_NAME, so the PR update watcher
+#                            never takes a run for a session to tell about a PR
 #
 # The review gets its project knowledge from prompts/project-context.md instead.
 # Runs headless, so it needs no workspace trust; it uses the normal login.
@@ -26,7 +28,7 @@ load_config || exit 2
 LEAN_TOOLS="Bash,Read,Grep,Glob,Agent,Write"
 
 cd "$ROOT" || exit 2
-exec claude -p \
+exec claude -p --name "$REVIEW_SESSION_NAME" \
   --settings "$ROOT/claude/lean-settings.json" \
   --setting-sources project,local \
   --strict-mcp-config --no-chrome --disable-slash-commands \

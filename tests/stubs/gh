@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# A stand-in for gh, for tests/watch_pass.sh. Records every call as "gh <args>"
+# in $STUB_DIR/calls.log and answers from files in $STUB_DIR:
+#
+#   gh pr list --repo O/R ...                    pr_list_O_R.json
+#   gh pr view <n> --repo O/R ...                pr_view_<n>.json
+#   gh api repos/O/R/issues/<n>/comments?...     comments_<n>.json
+#   gh api repos/O/R/pulls/<n>/comments?...      review_comments_<n>.json
+#   gh api repos/O/R/pulls/<n>/reviews?...       reviews_<n>.json
+#   gh api repos/O/R/issues/<n>/timeline?...     timeline_<n>.json
+#
+# A missing file answers []. Failures, each switched on by a file in $STUB_DIR:
+#
+#   fail_O_R        every call on O/R fails as for a repository that does not exist
+#   flaky_O_R       every call on O/R fails as for a GitHub outage (HTTP 502)
+#   missing_<n>     gh pr view <n> fails as for a PR number that does not exist
+#   nopr_<n>        gh pr view <n> fails with "no pull requests found"
+#   hidden_<n>      gh pr view <n> fails as for a repository it cannot see
+#   fail_view_<n>   gh pr view <n> fails with HTTP 502
+
+echo "gh $*" >>"$STUB_DIR/calls.log"
+
+repo=""
+file=""
+case "$1 $2" in
+  "pr list" | "pr view")
+    prev=""
+    for arg in "$@"; do
+      [ "$prev" = "--repo" ] && repo="$arg"
+      prev="$arg"
+    done
+    if [ "$2" = list ]; then file="pr_list_${repo//\//_}.json"; else file="pr_view_$3.json"; fi
+    ;;
+  "api repos/"*)
+    path="${2%%\?*}"
+    repo="$(cut -d/ -f2-3 <<<"$path")"
+    n="$(cut -d/ -f5 <<<"$path")"
+    case "$path" in
+      */issues/*/comments) file="comments_$n.json" ;;
+      */pulls/*/comments) file="review_comments_$n.json" ;;
+      */pulls/*/reviews) file="reviews_$n.json" ;;
+      */issues/*/timeline) file="timeline_$n.json" ;;
+    esac
+    ;;
+esac
+
+if [ -z "$file" ]; then
+  echo "stub gh: unexpected call: gh $*" >&2
+  exit 1
+fi
+if [ -e "$STUB_DIR/fail_${repo//\//_}" ]; then
+  echo "GraphQL: Could not resolve to a Repository with the name '$repo'. (repository)" >&2
+  exit 1
+fi
+if [ -e "$STUB_DIR/flaky_${repo//\//_}" ]; then
+  echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/missing_$3" ]; then
+  echo "GraphQL: Could not resolve to a PullRequest with the number of $3. (repository.pullRequest)" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/nopr_$3" ]; then
+  echo "no pull requests found" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/hidden_$3" ]; then
+  echo "GraphQL: Could not resolve to a Repository with the name '$repo'. (repository)" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr view" ] && [ -e "$STUB_DIR/fail_view_$3" ]; then
+  echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
+  exit 1
+fi
+if [ -f "$STUB_DIR/$file" ]; then
+  cat "$STUB_DIR/$file"
+else
+  echo "[]"
+fi

@@ -3,3 +3,4 @@
 *.env text eol=lf
 *.jq text eol=lf
 *.json text eol=lf
+tests/stubs/* text eol=lf

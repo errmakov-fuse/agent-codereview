@@ -56,9 +56,6 @@ key="$number"
 [ -n "$head_arg" ] && key="$number@$head_arg"
 [ "$test_mode" -eq 1 ] && key="test-$key"
 
-# Paths as Windows tools and prompts expect them (C:/...), where cygpath exists.
-winpath() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
-
 worktree="$LOCAL_CHECKOUT/.claude/worktrees/review-$number"
 cleanup() {
   git -C "$LOCAL_CHECKOUT" worktree remove --force "$worktree" >/dev/null 2>&1
