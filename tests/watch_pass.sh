@@ -346,11 +346,16 @@ touch "$STUB_DIR/copy_resume"
 other_open "5 $T2" "6 $T1"
 answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
 run_pass
-check "a resume that started a copy: NOT_DELIVERED with claude's line" \
-  "NOT_DELIVERED Org/other#5 bbbb2222 note: started a copy of session bbbb2222; the original is still running" "$(out)"
+check "a resume that started a copy: WATCH_GAVE_UP at once, not retried" \
+  "WATCH_GAVE_UP Org/other#5 bbbb2222" "$(out)"
 check "a resume that started a copy: sent.log says failed" "resume${T}failed" \
   "$(awk -F'\t' '$2 == "Org/other"' "$D/sent.log" | cut -f5-6)"
-check "a resume that started a copy: pending with one attempt" "1" "$(row pending.tsv Org/other 5 | cut -f4)"
+check "a resume that started a copy: no pending row" "" "$(row pending.tsv Org/other 5)"
+check "a resume that started a copy: claude's line is logged" "1" \
+  "$(grep -c 'gave up on Org/other#5 .*started a copy (note: started a copy of session bbbb2222; the original is still running)' "$STATE/poll.log")"
+run_pass
+check "a resume that started a copy: the next pass does not resume again" "1|" \
+  "$(resume_lines | wc -l | tr -d ' ')|$(out)"
 
 fresh
 enrol

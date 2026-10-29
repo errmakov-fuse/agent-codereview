@@ -81,8 +81,8 @@ send_inbox() {
 # Wakes a retired session with the message as its next turn, from the folder it
 # ran in (route_for has checked it exists). The message is one argument;
 # nothing here passes through a shell. A resume whose output speaks of a copy
-# or a fork reached a new session, not this one: that is a failure, and the
-# line saying so is the reason.
+# or a fork reached a new session, not this one: status 3, with the line saying
+# so as the reason, and never tried again (each try could start another copy).
 send_resume() {
   local owner="$1" message="$2" cwd out copy
   # `cd ""` stays put, so an unread folder would resume it wherever this runs.
@@ -95,7 +95,7 @@ send_resume() {
     if [ -n "$copy" ]; then
       log "resuming session $owner started a copy of it, not the session itself: ${out//$'\n'/ | }"
       printf '%s\n' "$copy"
-      return 1
+      return 3
     fi
     log "resumed session $owner: ${out//$'\n'/ | }"
     return 0
@@ -159,7 +159,7 @@ hold_while_off() {
 
 # Sends one message by inbox or resume and records the outcome.
 send_message() {
-  local repo="$1" n="$2" owner="$3" route="$4" summary="$5" kind="$6" short message why
+  local repo="$1" n="$2" owner="$3" route="$4" summary="$5" kind="$6" short message why status
   short=$(session_field "$owner" short)
   if ! message=$(compose_message "$kind" "$repo" "$n" "$summary") || [ -z "$message" ]; then
     log "composing the message for $repo#$n failed: $summary"
@@ -170,7 +170,9 @@ send_message() {
     resumes=$((resumes + 1))
     resumed="$resumed$owner "
   fi
-  if why=$(transmit "$route" "$owner" "$message"); then
+  why=$(transmit "$route" "$owner" "$message")
+  status=$?
+  if [ "$status" -eq 0 ]; then
     sent_record "$repo" "$n" "$owner" "$route" ok "$summary"
     pending_drop "$repo" "$n"
     event "NOTIFIED $repo#$n $route $short $summary"
@@ -178,7 +180,12 @@ send_message() {
   fi
   sent_record "$repo" "$n" "$owner" "$route" failed "$summary"
   log "sending $repo#$n to session $owner by $route failed: $why"
-  if [ "$kind" = update ]; then
+  if [ "$status" -eq 3 ]; then
+    # A resume that started a copy: another try could start another one.
+    pending_drop "$repo" "$n"
+    log "gave up on $repo#$n for session $owner, its resume started a copy ($why): $summary"
+    event "WATCH_GAVE_UP $repo#$n $short"
+  elif [ "$kind" = update ]; then
     count_failure "$repo" "$n" "$owner" "$short" "$summary" "$why"
   fi
 }

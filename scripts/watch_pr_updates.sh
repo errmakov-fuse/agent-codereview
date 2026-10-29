@@ -24,8 +24,9 @@
 # while PR_UPDATE_RESUME_RETIRED is on; otherwise its update waits in
 # pending.tsv, announced by WAITING when the switch is off. A session that has
 # come alive since the listing is not resumed either: it waits for the inbox. A
-# session whose folder is gone is never resumed, and a resume that says it
-# started a copy is not a delivery; both count as failed deliveries. At most
+# session whose folder is gone is never resumed: that counts as a failed
+# delivery. A resume that says it started a copy is given up at once
+# (WATCH_GAVE_UP), since another try could start another copy. At most
 # PR_UPDATE_MAX_PER_PR_PER_DAY messages per PR a day; a message that fails twice
 # is dropped. A failed gh pr list skips its repository for the pass; any other
 # gh failure skips only that PR.
