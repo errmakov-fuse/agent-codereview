@@ -45,6 +45,20 @@ RECEIVED="$WORK_DIR/received.txt"
 node "$TESTS/fake_inbox.js" "$PIPE" "$RECEIVED" > "$WORK/server.out" &
 SERVER_PID=$!
 for _ in $(seq 50); do grep -q listening "$WORK/server.out" && break; sleep 0.1; done
+if ! grep -q listening "$WORK/server.out"; then
+  echo "FAIL the fake inbox did not start listening within 5 seconds"
+  exit 1
+fi
+
+# The sender can exit before the fake inbox has read what it sent (on Windows
+# closing the pipe does not wait for the other end), so wait for the lines.
+received_lines() { { wc -l < "$RECEIVED" 2>/dev/null || echo 0; } | tr -d ' '; }
+wait_for_received_lines() {
+  for _ in $(seq 50); do
+    [ "$(received_lines)" -ge "$1" ] && return
+    sleep 0.1
+  done
+}
 
 send() {
   CLAUDE_HOME="$WORK_DIR/home" node "$SCRIPT" "$@" 2>"$WORK/stderr"
@@ -69,15 +83,17 @@ check() {
 echo "hello there" | send 4242 s-1
 check "a message to a live session is sent" "0" "$(cat "$WORK/status")"
 check "nothing is written to stderr on success" "" "$(cat "$WORK/stderr")"
+wait_for_received_lines 2
 check "the first line is the auth frame" \
   "{\"type\":\"auth\",\"token\":\"$TOKEN\"}" "$(sed -n 1p "$RECEIVED")"
 check "the second line is the message, stdin verbatim" \
   '{"type":"user","message":{"role":"user","content":"hello there\n"}}' "$(sed -n 2p "$RECEIVED")"
-check "nothing else is sent" "2" "$(wc -l < "$RECEIVED" | tr -d ' ')"
+check "nothing else is sent" "2" "$(received_lines)"
 
 echo "hello" | send 4242 s-other
 check "a registry entry for another session fails" "1" "$(cat "$WORK/status")"
 check "and says so" "registry entry is for another session" "$(cat "$WORK/stderr")"
+check "and nothing reaches the inbox" "2" "$(received_lines)"
 
 echo "hello" | send 9999 s-1
 check "a pid with no registry entry fails" "1" "$(cat "$WORK/status")"
@@ -95,10 +111,11 @@ write_key
 kill "$SERVER_PID" 2>/dev/null
 wait "$SERVER_PID" 2>/dev/null
 SERVER_PID=
-# On Windows the pipe goes away when the process does, a moment later.
+# On Windows the pipe goes away when the process does, a moment later, and
+# until then a send can fail with other codes (EPIPE, ECONNRESET, EBUSY).
 for _ in $(seq 50); do
   echo "hello" | send 4242 s-1
-  [ "$(cat "$WORK/status")" = 1 ] && break
+  grep -qE '^connect failed: (ENOENT|ECONNREFUSED)$' "$WORK/stderr" && break
   sleep 0.1
 done
 check "a stopped server fails" "1" "$(cat "$WORK/status")"
