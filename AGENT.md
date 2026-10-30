@@ -46,7 +46,9 @@ Do not review a PR inside your own session when a run can do it: your session ca
 
 ## PR updates to sessions
 
-`scripts/watch_pr_updates.sh` finds the PRs in the owner's Claude Code sessions' transcripts and, when a PR gets a comment or review from someone outside `PR_UPDATE_IGNORE_LOGINS`, sends its owning session a message with the PR link, the kinds of update and the commenters (never the text). A live session gets it in its inbox; a retired background session is resumed with `claude --bg --resume`. README has the rules; the settings are the `PR_UPDATE_*` lines in `config.env`. A PR seen for the first time is enrolled silently, so nothing is sent for what was already on it.
+`scripts/watch_pr_updates.sh` finds the PRs in the owner's Claude Code sessions' transcripts and, when a PR gets a comment or review from someone outside `PR_UPDATE_IGNORE_LOGINS`, sends its owning session a message with the PR link, the kinds of update and the commenters (never the text). A live session gets it in its inbox; a retired background session is resumed with `claude --bg --resume`. It also tells the session once when one of the owner's own PRs goes into merge conflict with its base, read from the same `gh pr list` (`mergeable`), and again only after the PR was mergeable in between. README has the rules; the settings are the `PR_UPDATE_*` lines in `config.env`. A PR seen for the first time is enrolled silently, so nothing is sent for what was already on it; a conflict it already has is still reported.
+
+To have a conflict reported again while it lasts, delete the PR's row from `state/pr_updates/conflicts.tsv`.
 
 ```bash
 bash "$AGENT_HOME/scripts/watch_pr_updates.sh" --dry-run     # what a pass would send; nothing is sent or recorded
@@ -77,6 +79,7 @@ To watch a PR the watcher forgot (a row in `closed.txt`): delete that row, delet
 | `state/pr_updates/sent.log` | One line per message: time, repo, number, session id, `inbox` or `resume`, `ok` or `failed`, summary. `ok` for an inbox message means written, not delivered. The daily cap counts only the `ok` rows of the last 24 hours. |
 | `state/pr_updates/pending.tsv` | Updates not delivered yet: waiting for a resume slot, for a retired session while `PR_UPDATE_RESUME_RETIRED` is off (announced once by a `WAITING` event), or failed once. Tried every pass. |
 | `state/pr_updates/closed.txt` | PRs the watcher has forgotten: merged, closed, or gone. |
+| `state/pr_updates/conflicts.tsv` | The owner's PRs whose merge conflict their session was told about, with when. Cleared when GitHub calls the PR mergeable again, or when the PR is forgotten. |
 | `state/pr_updates/sessions.tsv` | The sessions of the last pass: short id, session id, `live` or `retired`, pid, start time, folder, name. |
 | `state/pr_updates/scan.tsv` | Per session: how many bytes of its transcript were read. Delete a row to read that transcript again; the watcher drops the row itself when the session leaves the listing, so a session that comes back is read again. |
 | `state/pr_updates/unreachable.tsv` | Repositories GitHub would not resolve (see the traps). Cleared when one resolves again. |

@@ -155,4 +155,18 @@ check "a mark is the repo and an ISO time, once per repo" "1 1" \
 unreachable_clear Org/r; check "unreachable_clear of a mark is true" "0" "$?"
 check "unreachable_clear leaves other repositories" "Org/s" "$(cut -f1 "$D/unreachable.tsv")"
 
+# --- Conflicts -----------------------------------------------------------------
+conflict_has Org/r 1; check "conflict_has with no file is false" "1" "$?"
+conflict_drop Org/r 1; check "conflict_drop with no file is fine" "0" "$?"
+conflict_add Org/r 1
+conflict_add Org/r 2
+conflict_has Org/r 1; check "conflict_has after conflict_add is true" "0" "$?"
+conflict_has Org/r 10; check "conflict_has does not match a number prefix" "1" "$?"
+conflict_add Org/r 1
+check "conflict_add twice keeps one row: the repo, the number and an ISO time" "1" \
+  "$(grep -cE "^Org/r${T}1$T[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\$" "$D/conflicts.tsv")"
+conflict_drop Org/r 1
+conflict_has Org/r 1; check "conflict_drop removes the row" "1" "$?"
+conflict_has Org/r 2; check "conflict_drop leaves other PRs" "0" "$?"
+
 exit "$failed"
