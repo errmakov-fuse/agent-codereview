@@ -151,12 +151,7 @@ The ledger is `state/pr_updates/`: which session owns which PR, what was handled
 
 A reviewer can leave only comments ("Verdict: comment. Nothing blocks the merge.") and never approve. If the session that owns the PR has nothing to change, nobody re-requests a review, and the PR sits unapproved with no review pending. #1416 waited like this until a second reviewer was asked by hand.
 
-Each pass looks for your ready PRs that GitHub says still need a review, with no reviewer requested, whose last review is at least `STALLED_AFTER_MINUTES` (30) old. Once per PR head you get a notification, "PR #n is waiting for nobody". If `STALLED_PR_REVIEWER` is set, that login is requested too. The reviewer who only commented is not asked again, because it would comment again.
-
-```bash
-STALLED_PR_REVIEWER=""            # notify only (default)
-STALLED_PR_REVIEWER="MaxPyrko"    # also request this reviewer
-```
+Each pass looks for your ready PRs that GitHub says still need a review, with no reviewer requested, whose last review is at least `STALLED_AFTER_MINUTES` (30) old. Once per PR head it requests `MY_PR_REVIEWER` again and you get a notification, "PR #n was waiting for nobody". Their automated review may only comment again, but the request puts the PR back in their GitHub review queue, where they can approve it by hand. `STALLED_REREQUEST=false` keeps only the notification.
 
 ## PRs it ignores
 
