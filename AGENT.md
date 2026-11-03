@@ -11,8 +11,7 @@ Nothing here needs a long-lived session any more. A Windows scheduled task runs 
 | Me | `MY_LOGINS` | PRs from these logins are mine. A review from any of them counts as my review. |
 | Reviewing account | `REVIEW_AS` | Requested as reviewer on watched PRs; reviews are posted from it, so it must be the active `gh` account. |
 | Watched authors | `WATCHED_AUTHORS` | Their new PRs get a code review. |
-| My reviewer | `MY_PR_REVIEWER` | Requested on my PRs that have no reviewer. |
-| Fallback reviewer | `STALLED_PR_REVIEWER` | Requested on my PR that still needs an approval when its reviews are only comments and nobody is requested (after `STALLED_AFTER_MINUTES`). Empty means I only get a notification. |
+| My reviewer | `MY_PR_REVIEWER` | Requested on my PRs that have no reviewer, and again, once per PR head, on my PR that still needs an approval when its reviews are only comments and nobody is requested (after `STALLED_AFTER_MINUTES`; `STALLED_REREQUEST`). |
 
 - A watched author's PR with no review from me gets a first review.
 - It gets a re-review when its head has moved past the commit of my last review and either I requested changes, my approval was dismissed (`REREVIEW_DISMISSED_APPROVALS`), or my review was requested again. The first two wait for `REREVIEW_SETTLE_SECONDS` of a quiet head and for green CI checks; a re-request acts at once.
