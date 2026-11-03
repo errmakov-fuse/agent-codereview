@@ -13,7 +13,8 @@
 #
 # The PR update watcher's events:
 #
-#   NOTIFIED <repo>#<n> <inbox|resume> <id> <summary>   "PR #n: update"
+#   NOTIFIED <repo>#<n> <inbox|resume> <id> <summary>   "PR #n: update", or
+#                                                       "PR #n: merge conflicts"
 #   NOT_DELIVERED <repo>#<n> <id> <why>                 "PR #n: session <id> not reached"
 #   WATCH_GAVE_UP <repo>#<n> <id>                       "PR #n: carry the message by hand"
 #   CAPPED_UPDATES <repo>#<n> <count>                   "PR #n: update not forwarded"
@@ -108,7 +109,8 @@ $ErrorActionPreference = 'Continue'
     switch ($words[0]) {
         'NOTIFIED' {
             $did = if ($words[2] -eq 'resume') { 'Resumed' } else { 'Sent to' }
-            Show-Toast "PR ${pr}: update" "$($words[4]). $did session $($words[3])."
+            $what = if ($words[4] -like '*merge conflicts with*') { 'merge conflicts' } else { 'update' }
+            Show-Toast "PR ${pr}: $what" "$($words[4]). $did session $($words[3])."
         }
         'NOT_DELIVERED' { Show-Toast "PR ${pr}: session $($words[2]) not reached" "$(($words | Select-Object -Skip 3) -join ' '). Tried again next pass." }
         'WATCH_GAVE_UP' { Show-Toast "PR ${pr}: carry the message by hand" "Session $($words[2]) could not be reached twice." }

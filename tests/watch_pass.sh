@@ -148,12 +148,15 @@ set_bbbb_cwd() {
   ' "$(cd "$STUB_DIR" && { pwd -W 2>/dev/null || pwd; })/agents.json" "$1"
 }
 
-# open_prs <repo> "<n> <updatedAt>"...
+# open_prs <repo> "<n> <updatedAt> [<mergeable> <author login> <base branch>]"...
 open_prs() {
-  local repo="$1" out="" pr
+  local repo="$1" out="" pr n updated mergeable author base extra
   shift
   for pr in "$@"; do
-    out="$out${out:+,}{\"number\":${pr%% *},\"updatedAt\":\"${pr#* }\"}"
+    read -r n updated mergeable author base <<<"$pr"
+    extra=""
+    [ -n "$mergeable" ] && extra=",\"mergeable\":\"$mergeable\",\"author\":{\"login\":\"$author\"},\"baseRefName\":\"$base\""
+    out="$out${out:+,}{\"number\":$n,\"updatedAt\":\"$updated\"$extra}"
   done
   echo "[$out]" >"$STUB_DIR/pr_list_${repo//\//_}.json"
 }
@@ -592,7 +595,7 @@ check "a PR gh fails to read is logged" "1" "$(grep -c 'reading Org/repo#10 fail
 # sight with a complete list that path forgets the PR without a word.
 fresh
 HOOK="$STATE/hook.sh"
-echo 'open_updated_at() { return 1; }' >"$HOOK"
+echo 'open_row() { return 1; }' >"$HOOK"
 run_pass
 check "a failed open-list lookup: no events" "" "$(out)"
 check "a failed open-list lookup: every watched PR is kept, none closed" "6|" \
@@ -602,6 +605,129 @@ check "a failed open-list lookup: logged for each PR" "6" \
 HOOK=""
 run_pass
 check "the lookup works again: the PRs are enrolled" "$T1" "$(seen_updated Org/repo 10)"
+
+# --- Merge conflicts ---------------------------------------------------------------------
+conflict_with() { echo "merge conflicts with $1: rebase it onto $1, resolve them, run the tests and push"; }
+CONFLICT="$(conflict_with master)"
+exists() { [ -e "$D/$1" ] && echo present || echo absent; }
+
+# Conflicts do not move updatedAt, and a PR already conflicting at first sight
+# is news. Another author's conflicting PR is left alone.
+fresh
+repo_open "10 $T1 CONFLICTING errmakov-fuse master" "11 $T1 CONFLICTING samrent-infuse master"
+before=$(received_lines)
+run_pass
+wait_for_received_lines $((before + 2))
+check "conflict at first sight, my PR: one NOTIFIED line" "NOTIFIED Org/repo#10 inbox aaaa1111 $CONFLICT" "$(out)"
+check "conflict: the inbox got it as an update" \
+  "There is an update on PR https://github.com/Org/repo/pull/10: $CONFLICT. Check it out whether any action is needed and proceed if it is." \
+  "$(last_message)"
+check "conflict: conflicts.tsv has my PR, not the other author's" "1|" \
+  "$(row conflicts.tsv Org/repo 10 | wc -l | tr -d ' ')|$(row conflicts.tsv Org/repo 11)"
+check "conflict: the open list asks for mergeable, author and base, and nothing more is called" "1|0|0" \
+  "$(count_calls '^gh pr list --repo Org/repo .*--json number,updatedAt,mergeable,author,baseRefName$')|$(count_calls '^gh api')|$(count_calls '^gh pr view')"
+
+before=$(received_lines)
+run_pass
+check "still conflicting next pass: no event" "" "$(out)"
+repo_open "10 $T1 UNKNOWN errmakov-fuse master" "11 $T1"
+run_pass
+check "mergeable unknown (GitHub still computing): no event, the conflict is kept" "|1" \
+  "$(out)|$(row conflicts.tsv Org/repo 10 | wc -l | tr -d ' ')"
+repo_open "10 $T1 MERGEABLE errmakov-fuse master" "11 $T1"
+run_pass
+check "mergeable again: no event, the conflict is cleared" "|" "$(out)|$(row conflicts.tsv Org/repo 10)"
+sleep 0.3
+check "no message while it stayed, went unknown and cleared" "$before" "$(received_lines)"
+repo_open "10 $T1 CONFLICTING Errmakov master" "11 $T1"
+run_pass
+check "conflicting again after mergeable: told again (logins match in any case)" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 $CONFLICT" "$(out)"
+
+fresh
+enrol
+repo_open "10 $T2 CONFLICTING errmakov-fuse develop" "11 $T1"
+answer comments_10.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "a comment and a conflict in one pass: one message with both, naming the PR's base" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse; $(conflict_with develop)" "$(out)"
+
+# Comments GitHub answers with something unreadable wait for the next pass;
+# the conflict goes out on its own.
+fresh
+enrol
+repo_open "10 $T2 CONFLICTING errmakov-fuse master" "11 $T1"
+echo '{' >"$STUB_DIR/comments_10.json"
+run_pass
+check "unreadable comments with a conflict: the conflict goes alone, seen stays" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 $CONFLICT|$T1|1" \
+  "$(out)|$(seen_updated Org/repo 10)|$(row conflicts.tsv Org/repo 10 | wc -l | tr -d ' ')"
+
+fresh
+answer reviews_10.json "$(review samrent-infuse APPROVED "$OLD")"
+repo_open "10 $T1 CONFLICTING errmakov-fuse master" "11 $T1"
+run_pass --backfill
+check "backfill with a conflict: one message with the waiting review and the conflict" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 an approval from samrent-infuse; $CONFLICT" "$(out)"
+
+fresh
+enrol
+other_open "5 $T1 CONFLICTING errmakov-fuse master" "6 $T1"
+run_pass
+check "conflict, owner retired: resumed with the conflict" \
+  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: $CONFLICT. Check it out whether any action is needed and proceed if it is." \
+  "$(resume_lines)"
+
+fresh PR_UPDATE_RESUME_RETIRED=false
+enrol
+other_open "5 $T1 CONFLICTING errmakov-fuse master" "6 $T1"
+run_pass
+check "conflict, resumes off: WAITING once" "WAITING Org/other#5 bbbb2222 $CONFLICT" "$(out)"
+run_pass
+check "conflict, resumes off: the next pass is silent, the message still waits" "|1|1" \
+  "$(out)|$(row pending.tsv Org/other 5 | wc -l | tr -d ' ')|$(row conflicts.tsv Org/other 5 | wc -l | tr -d ' ')"
+
+fresh
+enrol
+for _ in 1 2 3 4 5 6; do
+  printf '%s\tOrg/repo\t10\t%s\tinbox\tok\t1 comment from x\n' "$(date +%s)" "$AAAA" >>"$D/sent.log"
+done
+repo_open "10 $T1 CONFLICTING errmakov-fuse master" "11 $T1"
+run_pass
+check "conflict over the daily cap: CAPPED_UPDATES" "CAPPED_UPDATES Org/repo#10 6" "$(out)"
+run_pass
+check "conflict over the daily cap: counted as handled, not tried every pass" "" "$(out)"
+
+# A ledger read that fails before the message goes out leaves the conflict
+# unrecorded, so the next pass tells it.
+fresh
+enrol
+repo_open "10 $T1 CONFLICTING errmakov-fuse master" "11 $T1"
+HOOK="$STATE/hook.sh"
+echo 'pending_get() { return 1; }' >"$HOOK"
+run_pass
+check "conflict, the ledger read fails: no event, not recorded" "|" "$(out)|$(row conflicts.tsv Org/repo 10)"
+HOOK=""
+run_pass
+check "conflict, the ledger works again: told" "NOTIFIED Org/repo#10 inbox aaaa1111 $CONFLICT" "$(out)"
+
+fresh
+repo_open "10 $T1 CONFLICTING errmakov-fuse master" "11 $T1"
+run_pass
+open_prs Org/repo "11 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+echo '{"state":"MERGED","mergedBy":{"login":"errmakov-fuse"}}' >"$STUB_DIR/pr_view_10.json"
+run_pass
+check "a merged PR's conflict row goes with it" "" "$(row conflicts.tsv Org/repo 10)"
+
+fresh
+enrol
+repo_open "10 $T1 CONFLICTING errmakov-fuse master" "11 $T1"
+before=$(received_lines)
+run_pass --dry-run
+check "conflict, dry run: DRY_RUN line, nothing recorded" "DRY_RUN NOTIFIED Org/repo#10 inbox aaaa1111 $CONFLICT|absent" \
+  "$(out)|$(exists conflicts.tsv)"
+sleep 0.3
+check "conflict, dry run: nothing sent" "$before" "$(received_lines)"
 
 # --- Dry run and backfill ---------------------------------------------------------------
 fresh

@@ -9,10 +9,14 @@ PER_PAGE=100
 READ_STDIN='const data = JSON.parse(require("fs").readFileSync(0, "utf8"));'
 # An entry without an updatedAt would print "undefined", which compares as newer
 # than any time for ever; it is left out, and how many were is the only stderr.
+# A missing mergeable, author or base prints as -: bash's read folds empty tab
+# columns together, and whitespace in a value would shift the columns after it.
 PARSE_PR_LIST="$READ_STDIN"'
 const kept = data.filter((pr) => pr && typeof pr.updatedAt === "string" && pr.updatedAt);
+const word = (value) => (typeof value === "string" && value.replace(/\s/g, "")) || "-";
 if (kept.length < data.length) process.stderr.write(String(data.length - kept.length));
-process.stdout.write(kept.map((pr) => pr.number + "\t" + pr.updatedAt + "\n").join(""));'
+process.stdout.write(kept.map((pr) => [pr.number, pr.updatedAt, word(pr.mergeable),
+  word(pr.author && pr.author.login), word(pr.baseRefName)].join("\t") + "\n").join(""));'
 PARSE_PR_VIEW="$READ_STDIN"'
 process.stdout.write((data.state || "") + "\t" + ((data.mergedBy && data.mergedBy.login) || "") + "\n");'
 PARSE_CLOSER="$READ_STDIN"'
@@ -43,13 +47,15 @@ gh_log_err() {
   cat "$scratch/gh_err" >>"$LOG"
 }
 
-# "<n>\t<updatedAt>" for each open PR of a repository. Status 2 when GitHub
+# "<n>\t<updatedAt>\t<mergeable>\t<author>\t<base branch>" for each open PR of a
+# repository; mergeable is MERGEABLE, CONFLICTING or UNKNOWN (GitHub works it
+# out lazily, so UNKNOWN is common right after a push to the base branch). Status 2 when GitHub
 # would not resolve the repository, 1 when gh fails otherwise, 4 when the list
 # had PRs without an updatedAt: those are left out, so the list is not complete.
 # Each such repository goes into $scratch/no_updated_at, logged once a pass.
 open_prs_of() {
   local list parsed skipped
-  if ! list=$(gh_quiet pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt); then
+  if ! list=$(gh_quiet pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt,mergeable,author,baseRefName); then
     grep -q "$REPO_UNRESOLVED" "$scratch/gh_err" && return 2
     gh_log_err
     return 1
