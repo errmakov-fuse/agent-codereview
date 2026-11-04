@@ -14,7 +14,7 @@ Nothing here needs a long-lived session any more. A Windows scheduled task runs 
 | My reviewer | `MY_PR_REVIEWER` | Requested on my PRs that have no reviewer, and again, once per PR head, on my PR that still needs an approval when its reviews are only comments and nobody is requested (after `STALLED_AFTER_MINUTES`; `STALLED_REREQUEST`). |
 
 - A watched author's PR with no review from me gets a first review.
-- It gets a re-review when its head has moved past the commit of my last review and either I requested changes, my approval was dismissed (`REREVIEW_DISMISSED_APPROVALS`), or my review was requested again. The first two wait for `REREVIEW_SETTLE_SECONDS` of a quiet head and for green CI checks; a re-request acts at once.
+- It gets a re-review when its head has moved past the commit of my last review and either I requested changes, my approval was dismissed (`REREVIEW_DISMISSED_APPROVALS`) and nobody else has approved the new head, or my review was requested again. The first two wait for `REREVIEW_SETTLE_SECONDS` of a quiet head and for green CI checks; a re-request acts at once.
 - After `MAX_CHANGE_ROUNDS` change requests on a PR, new commits stop starting re-reviews; the author gets one comment and a re-request still works.
 - Drafts are reviewed only when my review is requested on them, unless `REVIEW_DRAFTS=true`.
 - A PR whose title contains one of `SKIP_TITLE_KEYWORDS` (`S.Y.S.T.E.M`) is ignored completely. If the owner asks for such a PR by name, review it by hand: the keyword stops the automatic reaction, not a direct request.

@@ -29,6 +29,11 @@ classify() {
 # 36 someone else requested changes, I approved      40 my approval dismissed, head moved
 # 41 only a comment from me, head moved
 #
+# My approval dismissed and the head moved to h2, while someone else reviewed:
+# 42 they approved h2                                43 they approved h1, the old head
+# 44 they approved h2, then requested changes on it  45 they approved h2, and I was re-requested
+# 46 they approved h2, then left a thread reply
+#
 # Title keywords (cases 1-41 and 60-65 have no title unless noted):
 # 50 watched, keyword in the title                   51 watched, keyword in another case
 # 52 mine, keyword in the title                      53 watched, changes requested and moved, keyword
@@ -83,6 +88,9 @@ check() {
 check "dismissed approvals are re-reviewed when the switch is on" \
   "$expected_ready
 REREVIEW 40 h2 dismissed h1
+REREVIEW 43 h2 dismissed h1
+REREVIEW 44 h2 dismissed h1
+REREVIEW 45 h2 rerequested h1
 THEIRS 54
 $expected_requested_drafts
 REREVIEW 72 h2 changes_requested h1
@@ -96,6 +104,7 @@ REREVIEW 82 h2 changes_requested h1" "$(classify true "$SKIP" false)"
 
 check "dismissed approvals are left alone when the switch is off" \
   "$expected_ready
+REREVIEW 45 h2 rerequested h1
 THEIRS 54
 $expected_requested_drafts
 REREVIEW 72 h2 changes_requested h1
@@ -109,6 +118,7 @@ REREVIEW 82 h2 changes_requested h1" "$(classify false "$SKIP" false)"
 
 check "with no skip keywords the titled PRs are classified like any other" \
   "$expected_ready
+REREVIEW 45 h2 rerequested h1
 THEIRS 50
 THEIRS 51
 MINE 52
@@ -138,6 +148,7 @@ REREVIEW 30 h2 changes_requested h1
 REREVIEW 32 h2 changes_requested h1
 REREVIEW 34 h2 changes_requested h1
 REREVIEW 35 h2 changes_requested unknown
+REREVIEW 45 h2 rerequested h1
 THEIRS 54
 THEIRS 60
 THEIRS 61

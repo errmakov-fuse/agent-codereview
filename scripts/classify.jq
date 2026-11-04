@@ -27,6 +27,10 @@
 # author has more to fix, and a review now would be spent on a moving target.
 # A re-request is reported whatever the checks say.
 #
+# A dismissed re-review is also skipped when someone else's latest verdict is an
+# approval of the current head: the PR already has what it needs, and a second
+# look at the same commit adds cost, not information. A re-request still starts one.
+#
 # After $max_change_rounds change requests from me, new commits no longer start a
 # re-review by themselves (CAPPED): rounds that keep failing need a conversation.
 # A re-request still starts one. 0 turns the cap off.
@@ -37,6 +41,15 @@ def check_states:
    | if .__typename == "StatusContext" then (.state // "PENDING")
      elif (.status // "COMPLETED") != "COMPLETED" then "PENDING"
      else (.conclusion // "") end];
+
+# True when someone other than $me gave the head an approval that is still their
+# latest verdict (thread replies, COMMENTED, do not count as a verdict).
+def approved_at_head_by_others($me):
+  .headRefOid as $head
+  | [.reviews[] | select((.author.login // "") as $login | $me | any(. == $login) | not)
+                | select(.state != "COMMENTED")]
+  | group_by(.author.login)
+  | any(.[]; (sort_by(.submittedAt) | last) | .state == "APPROVED" and (.commit.oid // "") == $head);
 
 def checks_settled:
   check_states
@@ -90,7 +103,8 @@ def checks_settled:
                 else
                   "REREVIEW \($pr.number) \($pr.headRefOid) changes_requested \($reviewed)"
                 end
-            elif $last.state == "DISMISSED" and $rereview_dismissed then
+            elif $last.state == "DISMISSED" and $rereview_dismissed
+                 and ($pr | approved_at_head_by_others($me) | not) then
               "REREVIEW \($pr.number) \($pr.headRefOid) dismissed \($reviewed)"
             else
               empty

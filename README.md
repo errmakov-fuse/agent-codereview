@@ -93,7 +93,7 @@ A run's prompt, the reviewer's prompt, the review body and Claude's JSON result 
 A teammate's PR is re-reviewed when it has moved past the commit your last review was on, and one of these is true:
 
 - your last review requested changes;
-- your approval was dismissed by the new commits (`REREVIEW_DISMISSED_APPROVALS=true`);
+- your approval was dismissed by the new commits (`REREVIEW_DISMISSED_APPROVALS=true`), unless someone else has already approved the new head;
 - you were requested as reviewer again.
 
 For the first two, the pass waits until the PR has had no new commits for `REREVIEW_SETTLE_SECONDS` (30 minutes by default) and its CI checks have finished without a failure. A re-request is acted on at once, whatever the checks say. The re-review checks whether each earlier finding was dealt with and reviews the new commits; for a small change it checks them itself instead of starting a reviewer. A rebase that changes nothing is approved again by `run_review.sh` itself, without starting Claude at all.
