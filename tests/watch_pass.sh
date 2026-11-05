@@ -371,7 +371,7 @@ check "a failed resume: NOT_DELIVERED with claude's last line" \
 check "a failed resume: pending with one attempt" "1" "$(row pending.tsv Org/other 5 | cut -f4)"
 
 # --- The daily cap ------------------------------------------------------------------
-fresh
+fresh PR_UPDATE_MAX_PER_PR_PER_DAY=6
 enrol
 for _ in 1 2 3 4 5 6; do
   printf '%s\tOrg/repo\t10\t%s\tinbox\tok\t1 comment from x\n' "$(date +%s)" "$AAAA" >>"$D/sent.log"
@@ -687,7 +687,7 @@ run_pass
 check "conflict, resumes off: the next pass is silent, the message still waits" "|1|1" \
   "$(out)|$(row pending.tsv Org/other 5 | wc -l | tr -d ' ')|$(row conflicts.tsv Org/other 5 | wc -l | tr -d ' ')"
 
-fresh
+fresh PR_UPDATE_MAX_PER_PR_PER_DAY=6
 enrol
 for _ in 1 2 3 4 5 6; do
   printf '%s\tOrg/repo\t10\t%s\tinbox\tok\t1 comment from x\n' "$(date +%s)" "$AAAA" >>"$D/sent.log"

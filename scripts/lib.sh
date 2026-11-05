@@ -47,7 +47,7 @@ load_config() {
   # MY_LOGINS are always ignored, whatever the setting holds: a session that
   # comments on its own PR must not be woken by its own words, again and again.
   PR_UPDATE_IGNORE_LOGINS="$MY_LOGINS ${PR_UPDATE_IGNORE_LOGINS:-dependabot[bot]}"
-  : "${PR_UPDATE_MAX_PER_PR_PER_DAY:=6}"
+  : "${PR_UPDATE_MAX_PER_PR_PER_DAY:=20}"
   : "${PR_UPDATE_MAX_RESUMES_PER_PASS:=2}"
   : "${PR_UPDATE_RESUME_RETIRED:=true}"
   for name in PR_UPDATE_MAX_PER_PR_PER_DAY PR_UPDATE_MAX_RESUMES_PER_PASS; do

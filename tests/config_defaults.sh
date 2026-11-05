@@ -57,7 +57,7 @@ my_logins="$(. "$TMP/defaults.env" && echo "$MY_LOGINS")"
 check "settings missing from config.env get their defaults" \
   "PR_UPDATE_ENABLED = true
 PR_UPDATE_IGNORE_LOGINS = \"$my_logins dependabot[bot]\"
-PR_UPDATE_MAX_PER_PR_PER_DAY = 6
+PR_UPDATE_MAX_PER_PR_PER_DAY = 20
 PR_UPDATE_MAX_RESUMES_PER_PASS = 2
 PR_UPDATE_RESUME_RETIRED = true
 -d \"\$PR_UPDATES_DIR\"" "$(loaded "$TMP/defaults.env" "$TMP/state1")"
