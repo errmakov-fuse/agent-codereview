@@ -14,7 +14,7 @@ The reviewer uses no long-lived Claude session. That is where the cost was: a se
 
 | Path | What it is |
 |---|---|
-| `config.env` | Repository, logins, models, limits. The only file to edit for another repo or team. |
+| `config.env.example` | Repository, logins, models, limits, with what each one does. Copied to `config.env`, the live settings, which git ignores. |
 | `AGENT.md` | Notes for a Claude session asked about the reviewer, or to review a PR by hand. |
 | `scripts/poll.sh` | One pass over the open PRs: requests reviewers and starts review runs. |
 | `scripts/run_review.sh` | Reviews one PR in a fresh headless run and posts the result. `--test` does everything but post. |
@@ -47,7 +47,7 @@ The reviewer uses no long-lived Claude session. That is where the cost was: a se
 
 ## Install
 
-1. Clone this repository and edit `config.env`.
+1. Clone this repository, copy `config.env.example` to `config.env` and edit it. Every poll reads `config.env` afresh, so a change applies at the next poll; no commit, PR or reinstall is needed (except `POLL_SECONDS`, which `install.ps1` writes into the task). When a setting is added to or renamed in `config.env.example`, make the same change in `config.env`: `tests/config_keys.sh` fails until both set the same variables.
 2. Register the scheduled task (no administrator rights needed):
 
    ```powershell
@@ -116,7 +116,7 @@ A teammate answers a PR hours after the Claude Code session that opened it went 
 
 When several sessions name one PR, one gets the message: the best source wins, then a live session over a retired one, then the one started last.
 
-**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (always `MY_LOGINS`, so a session's own replies never wake it, plus `dependabot[bot]` and `infusemedia`, the account that posts the automated scan reports, in the shipped `config.env`). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when the merger or closer is one of `MY_LOGINS`. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
+**What counts as an update.** A comment, a review comment or a review from anyone not in `PR_UPDATE_IGNORE_LOGINS` (always `MY_LOGINS`, so a session's own replies never wake it, plus `dependabot[bot]` and `infusemedia`, the account that posts the automated scan reports, in the shipped `config.env.example`). Several updates on one PR in one pass make one message. A merged or closed PR gets one notice and is then forgotten. The notice goes to a live session only, and not at all when the merger or closer is one of `MY_LOGINS`. A PR seen for the first time is enrolled silently: what is already on it does not count (see `--backfill` below).
 
 **Merge conflicts.** When one of your PRs (author in `MY_LOGINS`) conflicts with its base branch, its session is told once: `There is an update on PR <url>: merge conflicts with master: rebase it onto master, resolve them, run the tests and push. ...`. This also goes out when the PR already conflicts the first time the watcher sees it. The session is told again only after GitHub has called the PR mergeable in between, so a PR that stays in conflict does not wake its session every pass. If new comments arrive in the same pass, they go out in the same message. A teammate's PR is never reported this way, even when one of your sessions names it, because the session must not rebase someone else's branch. The watcher reads the conflict from the `gh pr list` it already makes, so this costs no extra call. A push to the base branch does not change a PR's update time; that is why the watcher checks mergeability on every pass. While GitHub is still working mergeability out (`UNKNOWN`), the watcher changes nothing. The caps and the resume of a retired session apply as for any update. A conflict dropped by the daily cap, or given up after two failed deliveries, is not reported again until it has cleared. When `master` moves under several of your PRs, each conflicting one wakes its session.
 

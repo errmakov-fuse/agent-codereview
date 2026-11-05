@@ -133,7 +133,7 @@ fresh() {
   cp "$WORK/home/agents.json" "$STUB_DIR/agents.json"
   set_bbbb_cwd "$BBBB_CWD"
   CONF="$STATE/config.env"
-  { cat "$ROOT/config.env"; echo 'MY_LOGINS="errmakov-fuse errmakov"'; printf '%s\n' "$@"; } >"$CONF"
+  { cat "$ROOT/config.env.example"; echo 'MY_LOGINS="errmakov-fuse errmakov"'; printf '%s\n' "$@"; } >"$CONF"
   repo_open "10 $T1" "11 $T1"
   other_open "5 $T1" "6 $T1"
 }

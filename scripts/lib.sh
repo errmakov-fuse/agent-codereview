@@ -28,7 +28,7 @@ REVIEW_SESSION_NAME=agent-codereview-review
 
 load_config() {
   if [ ! -f "$CONFIG" ]; then
-    echo "config not found: $CONFIG" >&2
+    echo "config not found: $CONFIG (copy config.env.example to config.env and edit it)" >&2
     return 1
   fi
   # shellcheck source=/dev/null
