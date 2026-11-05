@@ -85,7 +85,7 @@ A run's prompt, the reviewer's prompt, the review body and Claude's JSON result 
 | `PR_UPDATE_ENABLED` | `false` turns the PR update watcher off. |
 | `PR_UPDATE_RESUME_RETIRED` | `false` stops the watcher from resuming retired sessions; their updates wait until the session is live again, with an "update waiting" notification. |
 | `PR_UPDATE_MAX_RESUMES_PER_PASS` | Retired sessions resumed in one pass (2). The rest wait for the next pass. |
-| `PR_UPDATE_MAX_PER_PR_PER_DAY` | Messages to sessions about one PR in 24 hours (6). Later updates are dropped, with a notification. |
+| `PR_UPDATE_MAX_PER_PR_PER_DAY` | Messages to sessions about one PR in 24 hours (20). Later updates are dropped, with a notification. |
 | `PR_UPDATE_IGNORE_LOGINS` | Logins whose comments and reviews are not updates, besides `MY_LOGINS`, which are always ignored. Empty means `dependabot[bot]`. |
 
 ## When a PR is reviewed again
