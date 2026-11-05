@@ -33,7 +33,9 @@ The reviewer uses no long-lived Claude session. That is where the cost was: a se
 | `scripts/session_prs.js` | Lists your Claude Code sessions and the PRs in their transcripts. |
 | `scripts/pr_updates.js` | Turns the comments and reviews of one PR into a one-line summary of what is new. |
 | `scripts/send_to_session.js` | Posts a message into a live session's inbox. |
+| `scripts/stalled.sh` | Requests your reviewer again on your PR that waits for nobody (see below). |
 | `tests/classify.sh` | Checks the rules against made-up PRs in `tests/classify_cases.json`. |
+| `tests/stalled.sh` | Checks when a PR that waits for nobody is requested again, with GitHub stubbed. |
 | `tests/watch_pass.sh` | Runs whole watcher passes against stub `gh` and `claude` commands (`tests/stubs/`), made-up sessions (`tests/fixtures/`) and a fake inbox (`tests/fake_inbox.js`). Nothing real is touched. |
 | `tests/pr_updates.sh`, `session_prs.sh`, `send_to_session.sh`, `watch_ledger.sh`, `config_defaults.sh` | Checks of the watcher's parts. |
 | `skills/irl/` | The `irl` skill: shows one concrete case for a statement that is too abstract. |
@@ -64,6 +66,7 @@ bash scripts/run_review.sh 1371 --test    # a full review of PR 1371, not posted
 bash scripts/run_review.sh 1371 --test --reviewer-model opus   # the same on another reviewer model
 bash scripts/run_review.sh 1371           # review PR 1371 and post it
 bash tests/classify.sh                    # checks the classification rules; needs gh logged in
+bash tests/stalled.sh                     # checks the stalled-PR re-requests; needs gh logged in
 bash scripts/watch_pr_updates.sh --dry-run   # what a watcher pass would send now
 bash tests/watch_pass.sh                  # whole watcher passes against stubs; needs only node
 bash scripts/measure_context.sh           # the fixed context of a lean run (about 1 cent)
@@ -153,7 +156,7 @@ The ledger is `state/pr_updates/`: which session owns which PR, what was handled
 
 A reviewer can leave only comments ("Verdict: comment. Nothing blocks the merge.") and never approve. If the session that owns the PR has nothing to change, nobody re-requests a review, and the PR sits unapproved with no review pending. #1416 waited like this until a second reviewer was asked by hand.
 
-Each pass looks for your ready PRs that GitHub says still need a review, with no reviewer requested, whose last review is at least `STALLED_AFTER_MINUTES` (30) old. Once per PR head it requests `MY_PR_REVIEWER` again and you get a notification, "PR #n was waiting for nobody". Their automated review may only comment again, but the request puts the PR back in their GitHub review queue, where they can approve it by hand. `STALLED_REREQUEST=false` keeps only the notification.
+Each pass looks for your ready PRs that GitHub says still need a review, with no reviewer requested, that have been idle for `STALLED_AFTER_MINUTES` (30). Idle means no review, no push or comment of yours, and no earlier request from this check (made or failed), in that time. A push counts by its commit's date, since GitHub gives no push time. Such a PR gets `MY_PR_REVIEWER` requested again, and again after every later idle stretch, until someone approves it, so it is never left waiting for nobody. Their automated review may only comment again, but each request puts the PR back in their GitHub review queue, where they can approve it by hand. You get a notification, "PR #n was waiting for nobody", once per PR head. A PR that only collects comments is therefore re-requested about every half hour, and each new comment also reaches its session. `STALLED_REREQUEST=false` keeps only the notification. The check costs one `gh pr view` per PR whose last review is that old, to read your pushes and comments.
 
 ## PRs it ignores
 

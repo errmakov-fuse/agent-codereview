@@ -11,7 +11,7 @@ Nothing here needs a long-lived session any more. A Windows scheduled task runs 
 | Me | `MY_LOGINS` | PRs from these logins are mine. A review from any of them counts as my review. |
 | Reviewing account | `REVIEW_AS` | Requested as reviewer on watched PRs; reviews are posted from it, so it must be the active `gh` account. |
 | Watched authors | `WATCHED_AUTHORS` | Their new PRs get a code review. |
-| My reviewer | `MY_PR_REVIEWER` | Requested on my PRs that have no reviewer, and again, once per PR head, on my PR that still needs an approval when its reviews are only comments and nobody is requested (after `STALLED_AFTER_MINUTES`; `STALLED_REREQUEST`). |
+| My reviewer | `MY_PR_REVIEWER` | Requested on my PRs that have no reviewer, and again on my PR that still needs an approval when its reviews are only comments and nobody is requested, after every `STALLED_AFTER_MINUTES` with no review and no push or comment of mine (`STALLED_REREQUEST`). |
 
 - A watched author's PR with no review from me gets a first review.
 - It gets a re-review when its head has moved past the commit of my last review and either I requested changes, my approval was dismissed (`REREVIEW_DISMISSED_APPROVALS`) and nobody else has approved the new head, or my review was requested again. The first two wait for `REREVIEW_SETTLE_SECONDS` of a quiet head and for green CI checks; a re-request acts at once.
@@ -72,7 +72,8 @@ To watch a PR the watcher forgot (a row in `closed.txt`): delete that row, delet
 | `state/attempts.txt` | Runs per key; at `MAX_ATTEMPTS` the PR is left alone and listed in `state/gave_up.txt`. Delete its lines to let it be tried again. |
 | `state/handled_prs.txt` | `own-<n>`: my PRs that got their reviewer. |
 | `state/capped.txt` | PRs that reached `MAX_CHANGE_ROUNDS` and got the one comment saying so. |
-| `state/stalled.txt` | `<n>@<head>`: my PRs reported as waiting for nobody at that head. |
+| `state/stalled.txt` | `<n>@<head>`: my PRs I was notified about as waiting for nobody at that head (the re-requests repeat; the notification does not). |
+| `state/stalled_tries.txt` | `<n>` TAB `<ISO time>`: when `MY_PR_REVIEWER` was last requested on my stalled PR, made or failed. The next request waits a whole idle stretch from it. |
 | `state/pr_updates/watch.tsv` | Which session watches which PR: repo, number, session id, source (`created`, `linked`, `mentioned`), first seen. Rows are added as new transcript lines are scanned (`scan.tsv` remembers how far each was read) and dropped when their session is gone or the PR is forgotten. |
 | `state/pr_updates/seen.tsv` | Per PR: the `updatedAt` last looked at and the newest comment or review already handled. No row means the PR is enrolled silently. |
 | `state/pr_updates/sent.log` | One line per message: time, repo, number, session id, `inbox` or `resume`, `ok` or `failed`, summary. `ok` for an inbox message means written, not delivered. The daily cap counts only the `ok` rows of the last 24 hours. |
