@@ -16,13 +16,15 @@
 #   REQUESTED <reviewer> #<n>       STARTED <key>       GAVE_UP <key>
 #   CAPPED #<n> <rounds>            a PR past MAX_CHANGE_ROUNDS got its one comment
 #   STALLED #<n> <last reviewer> <login requested again, or ->
-#                                   my PR needs an approval and nobody is asked for one
+#                                   my PR needs an approval and nobody is asked for one;
+#                                   once per head, though the request repeats (stalled.sh)
 #   and the POSTED / NOT_POSTED / FAILED line of each run (see run_review.sh).
 # Prints nothing when there was nothing to do.
 #
 #   --dry-run   print what it would do; request nothing, start nothing
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/stalled.sh"
 
 dry_run=0
 for arg in "$@"; do
@@ -65,29 +67,8 @@ while read -r kind number head reason reviewed; do
       continue
       ;;
     STALLED)
-      # Once per PR head: a new push is the author moving, and may change the picture.
-      last_reviewer="$reason"
-      last_at="$reviewed"
-      grep -qx "$number@$head" "$STALLED" && continue
-      age=$(($(date +%s) - $(date -d "$last_at" +%s 2>/dev/null || date +%s)))
-      [ "$age" -ge $((${STALLED_AFTER_MINUTES:-30} * 60)) ] || continue
-      reviewer=""
-      [ "$(json_bool "${STALLED_REREQUEST:-true}")" = "true" ] && reviewer="$MY_PR_REVIEWER"
-      if [ "$dry_run" -eq 1 ]; then
-        echo "DRY_RUN would report #$number as stalled (last review by $last_reviewer${reviewer:+, request $reviewer})"
-        continue
-      fi
-      requested="-"
-      if [ -n "$reviewer" ]; then
-        if request_reviewer "$number" "$reviewer" >>"$LOG" 2>&1; then
-          requested="$reviewer"
-        else
-          log "could not request $reviewer on stalled #$number"
-        fi
-      fi
-      echo "$number@$head" >>"$STALLED"
-      log "stalled #$number at ${head:0:7}: last review by $last_reviewer at $last_at, requested $requested"
-      echo "STALLED #$number $last_reviewer $requested"
+      # Requested again after every idle stretch; notified once per head (stalled.sh).
+      handle_stalled "$number" "$head" "$reason" "$reviewed"
       continue
       ;;
     CAPPED)

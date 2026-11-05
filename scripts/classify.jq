@@ -8,8 +8,9 @@
 #                                            review pending: others reviewed it, but only
 #                                            with comments (or their approval went stale),
 #                                            and nobody is requested. <reviewer> and <at>
-#                                            are the last such review; poll.sh waits
-#                                            STALLED_AFTER_MINUTES from <at>.
+#                                            are the last such review; stalled.sh waits
+#                                            STALLED_AFTER_MINUTES of idle from <at>,
+#                                            or from my later push or comment.
 #   THEIRS <n>                               a watched author's PR with no review from me
 #   REREVIEW <n> <head> <reason> <reviewed>  a watched author's PR that moved past my review
 #   CAPPED <n> <head> <rounds>               would be a changes_requested re-review, but I
