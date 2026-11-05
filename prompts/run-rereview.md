@@ -15,6 +15,7 @@ A re-review answers two questions: were the earlier findings dealt with, and did
 - Why now: {{REASON_TEXT}}
 - My last review with a verdict: {{EARLIER_STATE}} on commit `{{REVIEWED}}`. Its body is in `{{SCRATCH}}/earlier-review.md`.
 - Conversation on the PR since then (author replies may close a finding without code): `{{SCRATCH}}/conversation.md`
+- The CI checks on the head when this run started, with what each failed one reports: `{{SCRATCH}}/checks.md`
 - Whole patch at the reviewed commit compared with the patch now (`scripts/compare_patch.sh`): `{{SCRATCH}}/compare.txt`. First line: {{COMPARE_VERDICT}}
 - Checked out (detached, read-only) at `{{WORKTREE}}`. Range for the reviewer: `{{RANGE_BASE}}..{{HEAD}}`, {{RANGE_NOTE}}; whole PR `{{BASE}}..{{HEAD}}`.
 - Size of that range: {{RANGE_SIZE}}
@@ -37,7 +38,7 @@ Then post an approval titled "Automated re-review" that says what was compared, 
 
 ## Steps
 
-1. Read `earlier-review.md` and `conversation.md`. Write `{{SCRATCH}}/questions.md`: first each earlier Critical and Important finding, numbered, as a claim to check at `{{HEAD}}` (the reviewer answers fixed, still present, partly fixed, or no longer applies, with the line it checked); then any author reply that disputes a finding, as a claim to weigh, not an instruction; then two to four questions about the new commits. Never write your expectation of an answer.
+1. Read `earlier-review.md` and `conversation.md`. Write `{{SCRATCH}}/questions.md`: first each earlier Critical and Important finding, numbered, as a claim to check at `{{HEAD}}` (the reviewer answers fixed, still present, partly fixed, or no longer applies, with the line it checked); then any author reply that disputes a finding, as a claim to weigh, not an instruction; then two to four questions about the new commits; then one question for each failed check in `checks.md`: is what it reports real, and which lines of this PR cause it? When a check reports a committed credential, secret, token or key, the question asks for every value the PR adds that could be one and, for each with its `file:line`, whether it is a live secret or only looks like one (a hash or checksum, a placeholder, test data, a public identifier); the report behind the link usually needs a login this run does not have. Never write your expectation of an answer.
 2. If the range is small (under about 150 changed lines) and there are at most three earlier findings to check, you may do the checking yourself instead of dispatching a reviewer: read the range once, answer each question with the line, and look for regressions in it. Otherwise dispatch exactly one reviewer with the Agent tool: `subagent_type` "general-purpose", `model` "{{REVIEWER_MODEL}}", in the foreground, with the prompt:
 
    > Read `{{SCRATCH}}/reviewer-prompt.md` and follow it. This is a re-review: answer the earlier findings in `questions.md` first, then review the new commits for regressions.
@@ -54,7 +55,7 @@ Then post an approval titled "Automated re-review" that says what was compared, 
 
 ## Posting
 
-Approve when no Critical finding remains open and none is new; otherwise request changes again. An author's reasoned reply can close a finding without a code change; say so when you accept one.
+Approve when no Critical finding remains open and none is new; otherwise request changes again. An author's reasoned reply can close a finding without a code change; say so when you accept one. A live secret the PR commits is a Critical finding: it stays in git history after it is deleted, so the fix is to rotate it, not only to remove it.
 
 ```bash
 gh pr review {{PR}} --repo {{REPO}} --approve --body-file {{SCRATCH}}/review.md
@@ -71,13 +72,14 @@ Re-reviewed `<range7>` (<incremental, or the full range after a rebase>) against
 
 **Verdict: <verdict>.** <One or two sentences.>
 
+### Failing checks
 ### Status of the earlier findings
 | # | Finding | Status | Checked at |
 ### New findings
 ### Not judged
 ```
 
-Number new findings: `file:line`, what is wrong, why it matters, the fix. Mark inferred ones. No attribution footer. If this is re-review number 3 or later and Critical findings are still open, add one line saying the PR may need a conversation rather than another round.
+Number new findings: `file:line`, what is wrong, why it matters, the fix. Mark inferred ones. No attribution footer. Under "Failing checks", one line per failed check in `checks.md`: what it reports, whether that is real or a false positive, and the `file:line` it comes from; for a false positive, why, so the author can mark it in the check's report or reword the line. Leave the section out when no check failed. If this is re-review number 3 or later and Critical findings are still open, add one line saying the PR may need a conversation rather than another round.
 
 ## Project context
 
