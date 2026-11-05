@@ -7,6 +7,8 @@ TESTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export AGENT_CODEREVIEW_STATE="$TMP/state"
+# The tracked example, so the test also runs in a clone without a live config.env.
+export AGENT_CODEREVIEW_CONFIG="$TESTS/../config.env.example"
 
 # shellcheck source=/dev/null
 . "$TESTS/../scripts/lib.sh"

@@ -2,11 +2,11 @@
 # Checks the defaults load_config gives the PR update settings when config.env
 # does not set them, and that a non-numeric number is refused.
 #
-# Works on a temp copy of config.env and a temp state dir, so it touches nothing real.
+# Works on a temp copy of config.env.example and a temp state dir, so it touches nothing real.
 
 TESTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$TESTS/../scripts/lib.sh"
-CONFIG_SRC="$TESTS/../config.env"
+CONFIG_SRC="$TESTS/../config.env.example"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -65,7 +65,7 @@ PR_UPDATE_RESUME_RETIRED = true
 # The shipped config sets its own extra ignored logins; every other setting it
 # ships at the default value.
 shipped_ignore="$(. "$CONFIG_SRC" && echo "${PR_UPDATE_IGNORE_LOGINS:-dependabot[bot]}")"
-check "the settings as shipped in config.env load as the defaults do, plus its ignored logins" \
+check "the settings as shipped in config.env.example load as the defaults do, plus its ignored logins" \
   "$(loaded "$TMP/defaults.env" "$TMP/state2" | sed "s/^PR_UPDATE_IGNORE_LOGINS = .*/PR_UPDATE_IGNORE_LOGINS = \"$my_logins $shipped_ignore\"/")" \
   "$(loaded "$CONFIG_SRC" "$TMP/state3")"
 

@@ -27,8 +27,13 @@ if ($Remove) {
     exit 0
 }
 
+$configPath = Join-Path $Root 'config.env'
+if (-not (Test-Path -LiteralPath $configPath)) {
+    Write-Error "config.env not found. Copy config.env.example to config.env and edit it."
+    exit 1
+}
 $config = @{}
-foreach ($line in Get-Content -LiteralPath (Join-Path $Root 'config.env')) {
+foreach ($line in Get-Content -LiteralPath $configPath) {
     if ($line -match '^\s*([A-Z_]+)=(.*)$') { $config[$Matches[1]] = $Matches[2].Trim().Trim('"') }
 }
 $everyMinutes = [math]::Max(1, [math]::Round([int]$config['POLL_SECONDS'] / 60))
