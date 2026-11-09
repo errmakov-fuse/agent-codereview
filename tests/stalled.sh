@@ -141,6 +141,13 @@ printf '90\t%s\n' "$(ago 31)" >"$STALLED_TRIES"
 check "requested 31 minutes ago and still idle: requested again" "activity 90
 request 90 buddy" "$(handle_stalled 90 h1abcdef buddy "$last" >/dev/null; calls)"
 check "the last request is kept once per PR" "1" "$(grep -c '^90	' "$STALLED_TRIES")"
+printf '90\t%s\n91\t%s\n' "$(ago 5)" "$(ago 5)" >"$STALLED_TRIES"
+tries_before=$(cat "$STALLED_TRIES")
+( awk() { return 2; }; record_stalled_try 92 )
+check "a failed read of the tries leaves them as they were, with no temp file" "$tries_before|" \
+  "$(cat "$STALLED_TRIES")|$(ls "$STATE_DIR" | grep -c '\.tmp$' | sed 's/^0$//')"
+record_stalled_try 92
+check "recording a try keeps the other PRs' rows" "90 91 92" "$(cut -f1 "$STALLED_TRIES" | tr '\n' ' ' | sed 's/ $//')"
 
 # --- Re-requests off: the notification only, once per head --------------------------
 fresh

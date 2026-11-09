@@ -38,11 +38,18 @@ last_stalled_try() {
   awk -F'\t' -v n="$1" '$1 == n { at = $2 } END { print at }' "$STALLED_TRIES" 2>/dev/null
 }
 
+# The tries file with PR <n>'s row set to now; a missing file reads as empty.
+stalled_tries_with() {
+  if [ -f "$STALLED_TRIES" ]; then
+    awk -F'\t' -v n="$1" '$1 != n' "$STALLED_TRIES" || return 1
+  fi
+  printf '%s\t%s\n' "$1" "$(date -u +%FT%TZ)"
+}
+
 # Keeps one row per PR: <n> TAB <ISO time of the last request, made or failed>.
+# A failed read leaves the file as it was (rewrite_file).
 record_stalled_try() {
-  local rows
-  rows=$(awk -F'\t' -v n="$1" '$1 != n' "$STALLED_TRIES" 2>/dev/null)
-  { [ -z "$rows" ] || printf '%s\n' "$rows"; printf '%s\t%s\n' "$1" "$(date -u +%FT%TZ)"; } >"$STALLED_TRIES"
+  rewrite_file "$STALLED_TRIES" stalled_tries_with "$1"
 }
 
 # handle_stalled <n> <head> <last reviewer> <last review at>. Prints the STALLED

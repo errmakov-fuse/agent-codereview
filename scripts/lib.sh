@@ -185,15 +185,81 @@ release_run_lock() {
   rm -rf "${RUNNING_DIR:?}/$1"
 }
 
+# rewrite_file <file> <command> [args...]: replaces <file> with what <command>
+# prints. The output goes to a temp file of this process first, so parallel
+# writers never share one, and when <command> fails the file is left as it was:
+# a failed read must not become a file without its rows.
+rewrite_file() {
+  local file="$1" tmp="$1.$BASHPID.tmp"
+  shift
+  if ! "$@" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$file"
+}
+
+# Seconds a state-file lock may be held before it counts as left by a process
+# that died holding it; the holders below take well under a second.
+STATE_LOCK_STALE_SECONDS=30
+# Seconds lock_state_file waits for a held lock before giving up. Each holder
+# starts a few processes, which on Windows can take a second under load.
+STATE_LOCK_WAIT_SECONDS=30
+
+# lock_state_file <file>: serializes a read-modify-write of <file> between
+# processes (parallel review runs share attempts.txt). Waits up to
+# STATE_LOCK_WAIT_SECONDS; fails if the lock is still held then.
+lock_state_file() {
+  local dir="$1.lock" at deadline=$((SECONDS + STATE_LOCK_WAIT_SECONDS))
+  while [ "$SECONDS" -le "$deadline" ]; do
+    mkdir "$dir" 2>/dev/null && return 0
+    at=$(stat -c %Y "$dir" 2>/dev/null) || continue
+    if [ $(($(date +%s) - at)) -gt "$STATE_LOCK_STALE_SECONDS" ]; then
+      rmdir "$dir" 2>/dev/null
+      continue
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+unlock_state_file() {
+  rmdir "$1.lock" 2>/dev/null
+  return 0
+}
+
 attempts_of() {
   awk -v key="$1" '$1 == key { n = $2 } END { print n + 0 }' "$ATTEMPTS"
 }
 
+# The attempts file with <key>'s row set to <n>.
+attempts_with() {
+  awk -v key="$1" '$1 != key' "$ATTEMPTS" || return 1
+  echo "$1 $2"
+}
+
+# Adds one to <key>'s failed-run count and prints the new count. Parallel runs
+# count under a lock, so none loses another's row or increment. When the lock,
+# the read or the write fails, the run still goes ahead uncounted and the log
+# says so: one uncounted run costs at most one more try, while a write without
+# the lock or from a failed read could wipe other PRs' counts.
 count_attempt() {
   local n
-  n=$(($(attempts_of "$1") + 1))
-  { grep -v "^$1 " "$ATTEMPTS"; echo "$1 $n"; } >"$ATTEMPTS.tmp" && mv "$ATTEMPTS.tmp" "$ATTEMPTS"
-  echo "$n"
+  if ! lock_state_file "$ATTEMPTS"; then
+    log "the attempts of $1 are not counted: $ATTEMPTS.lock stayed held"
+    n=$(attempts_of "$1" 2>/dev/null) || n=0
+    echo "$((${n:-0} + 1))"
+    return 0
+  fi
+  if ! n=$(attempts_of "$1") || [ -z "$n" ]; then
+    log "reading the attempts of $1 failed; this run is not counted"
+    n=0
+  else
+    rewrite_file "$ATTEMPTS" attempts_with "$1" "$((n + 1))" ||
+      log "recording attempt $((n + 1)) of $1 failed; $ATTEMPTS is unchanged"
+  fi
+  unlock_state_file "$ATTEMPTS"
+  echo "$((n + 1))"
 }
 
 # Parallel runs fetch into the same repository; git's ref locks then make one of
