@@ -26,7 +26,8 @@
 #   lock/         directory holding a pid file: the pass that is running
 #
 # The lock here is not a RUNNING_DIR lock: those are counted as review runs.
-# Rewrites go to a .tmp file and are moved over the original, as count_attempt does.
+# Rewrites go through rewrite_file (lib.sh): a temp file moved over the original,
+# and the original left as it was when the read behind the rewrite fails.
 # One pass at a time (watch_lock) means no two writers meet in these files.
 
 WATCH_SESSIONS="$PR_UPDATES_DIR/sessions.tsv"
@@ -62,12 +63,18 @@ watch_rows_without() {
 # Removes the rows of one PR from a file.
 watch_drop_rows() {
   [ -f "$1" ] || return 0
-  watch_rows_without "$1" "$2" "$3" >"$1.tmp" && mv "$1.tmp" "$1"
+  rewrite_file "$1" watch_rows_without "$1" "$2" "$3"
+}
+
+# A file's rows without one PR's, then $4.
+watch_rows_with() {
+  watch_rows_without "$1" "$2" "$3" || return 1
+  printf '%s\n' "$4"
 }
 
 # Replaces the row of one PR in a file with $4, or adds it.
 watch_put_row() {
-  { watch_rows_without "$1" "$2" "$3"; printf '%s\n' "$4"; } >"$1.tmp" && mv "$1.tmp" "$1"
+  rewrite_file "$1" watch_rows_with "$@"
 }
 
 # Prints the row of one PR from a file, if there is one.
@@ -113,7 +120,7 @@ watch_unlock() {
 
 # Replaces sessions.tsv with the SESSION lines on stdin, minus the SESSION word.
 sessions_save() {
-  awk '/^SESSION\t/ { print substr($0, 9) }' >"$WATCH_SESSIONS.tmp" && mv "$WATCH_SESSIONS.tmp" "$WATCH_SESSIONS"
+  rewrite_file "$WATCH_SESSIONS" awk '/^SESSION\t/ { print substr($0, 9) }'
 }
 
 # One field of a session: short, status, pid, started, cwd or name.
@@ -299,18 +306,24 @@ checks_save() {
     checks_drop "$repo" "$n"
     return
   fi
-  old=$(awk -F'\t' -v repo="$repo" -v n="$n" '$1 == repo && $2 == n { print $3 "\t" $4 }' "$WATCH_CHECKS" 2>/dev/null)
-  stamp=$(date -u +%FT%TZ)
-  # A failed read of the other PRs' rows must not become a file without them.
-  if ! watch_rows_without "$WATCH_CHECKS" "$repo" "$n" >"$WATCH_CHECKS.tmp"; then
-    rm -f "$WATCH_CHECKS.tmp"
-    return 1
+  if [ -f "$WATCH_CHECKS" ]; then
+    old=$(awk -F'\t' -v repo="$repo" -v n="$n" '$1 == repo && $2 == n { print $3 "\t" $4 }' "$WATCH_CHECKS") || return 1
   fi
+  stamp=$(date -u +%FT%TZ)
+  rewrite_file "$WATCH_CHECKS" checks_rows_with "$repo" "$n" "$old" "$stamp" "$@"
+}
+
+# checks_save's new file: the other PRs' rows, then one row per key, with the
+# time from <old> ("<key>\t<time>" lines) when the key had one, else <stamp>.
+checks_rows_with() {
+  local repo="$1" n="$2" old="$3" stamp="$4" key
+  shift 4
+  watch_rows_without "$WATCH_CHECKS" "$repo" "$n" || return 1
   for key in "$@"; do
     key=$(watch_field "$key")
     printf '%s\t%s\t%s\t%s\n' "$repo" "$n" "$key" \
       "$(KEY="$key" STAMP="$stamp" awk -F'\t' '$1 == ENVIRON["KEY"] { found = $2 } END { print (found ? found : ENVIRON["STAMP"]) }' <<<"$old")"
-  done >>"$WATCH_CHECKS.tmp" && mv "$WATCH_CHECKS.tmp" "$WATCH_CHECKS"
+  done
 }
 
 checks_drop() {
@@ -333,6 +346,5 @@ unreachable_mark() {
 # Clears the mark; true only when there was one.
 unreachable_clear() {
   unreachable_has "$1" || return 1
-  awk -F'\t' -v repo="$1" '$1 != repo' "$WATCH_UNREACHABLE" >"$WATCH_UNREACHABLE.tmp" &&
-    mv "$WATCH_UNREACHABLE.tmp" "$WATCH_UNREACHABLE"
+  rewrite_file "$WATCH_UNREACHABLE" awk -F'\t' -v repo="$1" '$1 != repo' "$WATCH_UNREACHABLE"
 }

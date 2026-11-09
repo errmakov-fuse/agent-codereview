@@ -69,7 +69,7 @@ To watch a PR the watcher forgot (a row in `closed.txt`): delete that row, delet
 | `state/reviews.log` | One line per run: key, cost, Claude session id, and its RESULT line. |
 | `state/poll.log` | Reviewer requests, `gh` errors, run starts and ends; also what the PR update watcher logged: skipped repositories, failed deliveries, resumes. |
 | `state/runs/<n>-<time>/` | One run: the prompt it got, the reviewer prompt, the review body, Claude's JSON result. Kept for 14 days. |
-| `state/attempts.txt` | Runs per key; at `MAX_ATTEMPTS` the PR is left alone and listed in `state/gave_up.txt`. Delete its lines to let it be tried again. |
+| `state/attempts.txt` | Runs per key; at `MAX_ATTEMPTS` the PR is left alone and listed in `state/gave_up.txt`. Delete its lines to let it be tried again. Parallel runs count under `state/attempts.txt.lock`, a directory that lives for a moment; one older than 30 seconds is left over from a killed run and is taken over. |
 | `state/handled_prs.txt` | `own-<n>`: my PRs that got their reviewer. |
 | `state/capped.txt` | PRs that reached `MAX_CHANGE_ROUNDS` and got the one comment saying so. |
 | `state/stalled.txt` | `<n>@<head>`: my PRs I was notified about as waiting for nobody at that head (the re-requests repeat; the notification does not). |

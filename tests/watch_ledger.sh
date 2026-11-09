@@ -194,4 +194,19 @@ check "checks_save of nothing drops the PR's rows and leaves the others" "|https
 checks_drop Org/r 10
 check "checks_drop removes the PR's rows" "" "$(checks_known Org/r 10)"
 
+# --- A failed read never becomes a file without its rows ----------------------
+printf 'Org/r\t1\ta\nOrg/r\t2\tb\nOrg/r\t3\tc\n' >"$D/rows.tsv"
+rows_before=$(cat "$D/rows.tsv")
+( watch_rows_without() { return 2; }; watch_put_row "$D/rows.tsv" Org/r 4 "Org/r${T}4${T}d" )
+check "watch_put_row on a failed read: fails, the file is as it was" "1|$rows_before" "$?|$(cat "$D/rows.tsv")"
+( watch_rows_without() { return 2; }; watch_drop_rows "$D/rows.tsv" Org/r 1 )
+check "watch_drop_rows on a failed read: fails, the file is as it was" "1|$rows_before" "$?|$(cat "$D/rows.tsv")"
+checks_save Org/r 5 k1
+checks_before=$(cat "$D/checks.tsv")
+( watch_rows_without() { return 2; }; checks_save Org/r 6 k2 )
+check "checks_save on a failed read: fails, the file is as it was" "1|$checks_before" "$?|$(cat "$D/checks.tsv")"
+check "no temp file is left behind" "0" "$(ls "$D" | grep -c '\.tmp$')"
+watch_put_row "$D/rows.tsv" Org/r 2 "Org/r${T}2${T}B"
+check "watch_put_row still replaces the row and keeps the others" "a c B" "$(cut -f3 "$D/rows.tsv" | tr '\n' ' ' | sed 's/ $//')"
+
 exit "$failed"
