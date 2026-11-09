@@ -13,6 +13,11 @@
 #   closed.txt    repo, PR number, closed (ISO)
 #   conflicts.tsv repo, PR number, since (ISO): one of my PRs whose merge conflicts
 #                 its session was told about; cleared when it is mergeable again
+#   checks.tsv    repo, PR number, key, first told (ISO): a failed check on one of
+#                 my PRs its session was told about, keyed by its job link (or
+#                 "<name>@<link or head sha>"); a row leaves when that check stops
+#                 failing. Its absence means failed-check notices never ran here:
+#                 that pass records the failures without telling (checks_seeding)
 #   unreachable.tsv  repo, first failure (ISO): a repository GitHub would not
 #                 resolve (deleted, or hidden from the current gh account), kept
 #                 until a pass reads it again, so the outage is logged once
@@ -32,6 +37,7 @@ WATCH_SENT="$PR_UPDATES_DIR/sent.log"
 WATCH_CLOSED="$PR_UPDATES_DIR/closed.txt"
 WATCH_UNREACHABLE="$PR_UPDATES_DIR/unreachable.tsv"
 WATCH_CONFLICTS="$PR_UPDATES_DIR/conflicts.tsv"
+WATCH_CHECKS="$PR_UPDATES_DIR/checks.tsv"
 WATCH_SCAN="$PR_UPDATES_DIR/scan.tsv"
 WATCH_LOCK="$PR_UPDATES_DIR/lock"
 SECONDS_PER_DAY=86400
@@ -273,6 +279,42 @@ conflict_add() {
 
 conflict_drop() {
   watch_drop_rows "$WATCH_CONFLICTS" "$1" "$2"
+}
+
+# --- Failed checks -----------------------------------------------------------
+
+# The keys of a PR's failed checks its session was told about, one a line.
+checks_known() {
+  [ -f "$WATCH_CHECKS" ] || return 0
+  awk -F'\t' -v repo="$1" -v n="$2" '$1 == repo && $2 == n { print $3 }' "$WATCH_CHECKS"
+}
+
+# checks_save <repo> <n> <key>...: the PR's rows become these keys, each keeping
+# the time it was first told; no key drops them. A job that stops failing (it
+# was re-run, or the PR moved on) leaves the file, so it stays small.
+checks_save() {
+  local repo="$1" n="$2" old key stamp
+  shift 2
+  if [ "$#" -eq 0 ]; then
+    checks_drop "$repo" "$n"
+    return
+  fi
+  old=$(awk -F'\t' -v repo="$repo" -v n="$n" '$1 == repo && $2 == n { print $3 "\t" $4 }' "$WATCH_CHECKS" 2>/dev/null)
+  stamp=$(date -u +%FT%TZ)
+  # A failed read of the other PRs' rows must not become a file without them.
+  if ! watch_rows_without "$WATCH_CHECKS" "$repo" "$n" >"$WATCH_CHECKS.tmp"; then
+    rm -f "$WATCH_CHECKS.tmp"
+    return 1
+  fi
+  for key in "$@"; do
+    key=$(watch_field "$key")
+    printf '%s\t%s\t%s\t%s\n' "$repo" "$n" "$key" \
+      "$(KEY="$key" STAMP="$stamp" awk -F'\t' '$1 == ENVIRON["KEY"] { found = $2 } END { print (found ? found : ENVIRON["STAMP"]) }' <<<"$old")"
+  done >>"$WATCH_CHECKS.tmp" && mv "$WATCH_CHECKS.tmp" "$WATCH_CHECKS"
+}
+
+checks_drop() {
+  watch_drop_rows "$WATCH_CHECKS" "$1" "$2"
 }
 
 # --- Unreachable repositories ------------------------------------------------

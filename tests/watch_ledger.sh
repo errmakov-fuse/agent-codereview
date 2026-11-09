@@ -171,4 +171,27 @@ conflict_drop Org/r 1
 conflict_has Org/r 1; check "conflict_drop removes the row" "1" "$?"
 conflict_has Org/r 2; check "conflict_drop leaves other PRs" "0" "$?"
 
+# --- Failed checks ---------------------------------------------------------------
+check "checks_known with no file is empty and fine" "|0" "$(checks_known Org/r 1)|$?"
+checks_save Org/r 1; check "checks_save of nothing with no file is fine" "0" "$?"
+check "checks_save of nothing writes no file" "absent" "$([ -e "$D/checks.tsv" ] && echo present || echo absent)"
+checks_save Org/r 1 "https://x/job/1" "lint@abc"
+checks_save Org/r 10 "https://x/job/9"
+check "checks_known lists the PR's keys in order, not a number prefix's" \
+  "https://x/job/1"$'\n'"lint@abc" "$(checks_known Org/r 1)"
+check "a row is the repo, the number, the key and an ISO time" "1" \
+  "$(grep -cE "^Org/r${T}1${T}lint@abc$T[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\$" "$D/checks.tsv")"
+sed -i "s|^\(Org/r${T}1${T}lint@abc${T}\).*|\12020-01-01T00:00:00Z|" "$D/checks.tsv"
+checks_save Org/r 1 "lint@abc" "https://x/job/2"
+check "checks_save replaces the PR's keys and keeps the time of one it had" \
+  "lint@abc${T}2020-01-01T00:00:00Z|https://x/job/2" \
+  "$(awk -F'\t' '$2 == 1 && $3 == "lint@abc" { print $3 "\t" $4 }' "$D/checks.tsv")|$(checks_known Org/r 1 | tail -n 1)"
+checks_save Org/r 1 "a${T}b"
+check "a key's tab becomes a space" "a b" "$(checks_known Org/r 1)"
+checks_save Org/r 1
+check "checks_save of nothing drops the PR's rows and leaves the others" "|https://x/job/9" \
+  "$(checks_known Org/r 1)|$(checks_known Org/r 10)"
+checks_drop Org/r 10
+check "checks_drop removes the PR's rows" "" "$(checks_known Org/r 10)"
+
 exit "$failed"
