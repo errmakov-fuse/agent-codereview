@@ -13,7 +13,12 @@
 #      One of MY_LOGINS' PRs that the open list says is CONFLICTING with its
 #      base is news once, first sight included, in the same message as its
 #      comments (check_open); it is news again only after it was mergeable.
-#      A merge conflict does not move updatedAt, so this costs no extra call.
+#      Each check of one of MY_LOGINS' PRs that fails is news once, as soon as
+#      it fails, even while other checks still run (checks.tsv, by job link; a
+#      re-run is a new job). The same open list gives its checks. The first
+#      pass without a checks.tsv records the failures silently (checks_seeding).
+#      Neither a merge conflict nor a check moves updatedAt, so this costs no
+#      extra call.
 #   4. A watched PR gone from the open list gets one closing notice, only when
 #      its owner is live and the merger or closer is not one of MY_LOGINS, and
 #      leaves the watch list. One already closed when first seen gets no notice.
@@ -85,6 +90,13 @@ fi
 
 resumes=0     # sessions resumed in this pass
 resumed=" "   # their ids, space-separated
+MAX_NAMED_CHECKS=3   # failed checks named in one message; the rest are counted
+# 1 on the first pass with failed-check notices (no checks.tsv yet): the checks
+# already red on my PRs are recorded without a message, so turning this on does
+# not wake every session whose PR has been red for days. The pass then writes
+# the file, even empty, and from the next pass on a failure is news.
+checks_seeding=0
+[ -e "$WATCH_CHECKS" ] || checks_seeding=1
 
 now() { date -u +%FT%TZ; }
 pr_url() { echo "https://github.com/$1/pull/$2"; }
@@ -241,25 +253,93 @@ check_pr() {
   fi
 }
 
-# An open PR from the open list. One of MY_LOGINS' PRs that has just gone into
-# conflict with its base is news once: conflicts.tsv remembers it was told
-# until GitHub calls the PR mergeable again. UNKNOWN (GitHub has not worked it
-# out yet) changes nothing. A teammate's PR is never news this way: the session
-# that mentioned it must not rebase someone else's branch.
+# "a", "a and b", "a, b and c".
+join_and() {
+  local out="" i
+  for ((i = 1; i <= $#; i++)); do
+    if [ "$i" -eq 1 ]; then out="${!i}"
+    elif [ "$i" -eq $# ]; then out="$out and ${!i}"
+    else out="$out, ${!i}"; fi
+  done
+  printf '%s' "$out"
+}
+
+# checks_note <repo> <n> <head sha> <running> <failed>, the last three as
+# open_prs_of gives them. Sets checks_now to the keys failing now, checks_had
+# to those checks.tsv has, and checks_news to the news of the failed checks the
+# session was not told about yet, or nothing. A key leaves checks.tsv when its
+# check stops failing, so a re-run that fails again is a new job and news again.
+# Fails when checks.tsv cannot be read.
+checks_note() {
+  local repo="$1" n="$2" head="$3" running="$4" failed="$5" entry key name url commit
+  local entries=() names=() urls=() named=() i
+  checks_now=()
+  checks_news=""
+  checks_had=$(checks_known "$repo" "$n") || return 1
+  [ "$failed" = - ] || IFS=$'\x1e' read -ra entries <<<"$failed"
+  for entry in "${entries[@]}"; do
+    IFS=$'\x1f' read -r key name url <<<"$entry"
+    checks_now+=("$key")
+    grep -qxF -- "$key" <<<"$checks_had" && continue
+    names+=("$name")
+    urls+=("$url")
+  done
+  [ "${#names[@]}" -gt 0 ] || return 0
+  commit="${head:0:7}"
+  [ "$head" = - ] && commit="its head commit"
+  if [ "${#names[@]}" -eq 1 ]; then
+    checks_news="check ${names[0]} failed on $commit${urls[0]:+ (${urls[0]})}"
+  else
+    # A failed matrix must not make a message too long to pass as an argument.
+    for i in "${!names[@]}"; do
+      [ "$i" -lt "$MAX_NAMED_CHECKS" ] || break
+      named+=("${names[i]}${urls[i]:+ (${urls[i]})}")
+    done
+    [ "${#names[@]}" -gt "$MAX_NAMED_CHECKS" ] && named+=("$((${#names[@]} - MAX_NAMED_CHECKS)) more")
+    checks_news="checks $(join_and "${named[@]}") failed on $commit"
+  fi
+  [ "$running" -gt 0 ] 2>/dev/null &&
+    checks_news="$checks_news, $running other check$([ "$running" -eq 1 ] || echo s) still running"
+  checks_news="$checks_news: $CHECKS_ADVICE"
+}
+
+# An open PR from the open list (the columns of open_prs_of after the number).
+# One of MY_LOGINS' PRs that has just gone into conflict with its base is news
+# once: conflicts.tsv remembers it was told until GitHub calls the PR mergeable
+# again. UNKNOWN (GitHub has not worked it out yet) changes nothing. A check of
+# one of MY_LOGINS' PRs that has failed is news once, as soon as it fails, even
+# while others still run (checks_note). A teammate's PR is never news this way:
+# the session that mentioned it must not rebase or fix someone else's branch.
 check_open() {
-  local repo="$1" n="$2" updated="$3" mergeable="$4" author="$5" base="$6" note=""
+  local repo="$1" n="$2" updated="$3" mergeable="$4" author="$5" base="$6" head="$7" running="$8" failed="$9"
+  local note="" mine=0
+  is_mine "$author" && mine=1
   [ "$base" = - ] && base="its base branch"
   case "$mergeable" in
     MERGEABLE) conflict_has "$repo" "$n" && conflict_drop "$repo" "$n" ;;
     CONFLICTING)
-      if is_mine "$author" && ! conflict_has "$repo" "$n"; then
+      if [ "$mine" -eq 1 ] && ! conflict_has "$repo" "$n"; then
         # shellcheck disable=SC2059
         note=$(printf "$CONFLICT_SUMMARY" "$base" "$base")
       fi
       ;;
   esac
-  check_pr "$repo" "$n" "$updated" "$note" || return
+  checks_now=()
+  checks_news=""
+  checks_had=""
+  if [ "$mine" -eq 1 ] && ! checks_note "$repo" "$n" "$head" "$running" "$failed"; then
+    log "reading the failed checks of $repo#$n failed; trying again next pass"
+    return 1
+  fi
+  if [ "$checks_seeding" -eq 1 ] && [ -n "$checks_news" ]; then
+    log "$repo#$n already had failed checks when failed-check notices started; recorded, not told: $checks_news"
+    checks_news=""
+  fi
+  check_pr "$repo" "$n" "$updated" "$(join_news "$note" "$checks_news")" || return
   [ -z "$note" ] || conflict_add "$repo" "$n"
+  [ "$(printf '%s\n' "${checks_now[@]}" | sed '/^$/d')" = "$checks_had" ] && return 0
+  checks_save "$repo" "$n" "${checks_now[@]}" || log "could not record the failed checks of $repo#$n"
+  return 0
 }
 
 # Takes a PR off the watch list for good, without a notice.
@@ -268,6 +348,7 @@ forget_pr() {
   watch_drop_pr "$1" "$2"
   pending_drop "$1" "$2"
   conflict_drop "$1" "$2"
+  checks_drop "$1" "$2"
 }
 
 # The closing notice for a merged or closed PR, unless one of MY_LOGINS did it.
@@ -353,7 +434,7 @@ repo_unreachable() {
 # or a repository GitHub stops resolving, skips the repository for this pass;
 # a PR that cannot be read otherwise waits for the next pass on its own.
 check_repo() {
-  local repo="$1" open status complete=0 n row updated mergeable author base
+  local repo="$1" open status complete=0 n row updated mergeable author base head running failed
   open=$(open_prs_of "$repo")
   status=$?
   case "$status" in
@@ -376,8 +457,8 @@ check_repo() {
     if [ -z "$row" ]; then
       settle_closed "$repo" "$n" "$complete"
     else
-      IFS=$'\t' read -r _ updated mergeable author base <<<"$row"
-      check_open "$repo" "$n" "$updated" "$mergeable" "$author" "$base"
+      IFS=$'\t' read -r _ updated mergeable author base head running failed <<<"$row"
+      check_open "$repo" "$n" "$updated" "$mergeable" "$author" "$base" "$head" "$running" "$failed"
     fi
     status=$?
     [ "$status" -eq 0 ] && continue
@@ -403,5 +484,6 @@ retry_pending
 for repo in $(watch_prs | awk -F'\t' '!seen[$1]++ { print $1 }'); do
   check_repo "$repo"
 done
+[ "$checks_seeding" -eq 1 ] && { [ -e "$WATCH_CHECKS" ] || : >"$WATCH_CHECKS"; }
 log_no_updated_at
 exit 0

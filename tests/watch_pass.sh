@@ -624,8 +624,8 @@ check "conflict: the inbox got it as an update" \
   "$(last_message)"
 check "conflict: conflicts.tsv has my PR, not the other author's" "1|" \
   "$(row conflicts.tsv Org/repo 10 | wc -l | tr -d ' ')|$(row conflicts.tsv Org/repo 11)"
-check "conflict: the open list asks for mergeable, author and base, and nothing more is called" "1|0|0" \
-  "$(count_calls '^gh pr list --repo Org/repo .*--json number,updatedAt,mergeable,author,baseRefName$')|$(count_calls '^gh api')|$(count_calls '^gh pr view')"
+check "conflict: the open list asks for mergeable, author, base, head and checks, and nothing more is called" "1|0|0" \
+  "$(count_calls '^gh pr list --repo Org/repo .*--json number,updatedAt,mergeable,author,baseRefName,headRefOid,statusCheckRollup$')|$(count_calls '^gh api')|$(count_calls '^gh pr view')"
 
 before=$(received_lines)
 run_pass
@@ -728,6 +728,192 @@ check "conflict, dry run: DRY_RUN line, nothing recorded" "DRY_RUN NOTIFIED Org/
   "$(out)|$(exists conflicts.tsv)"
 sleep 0.3
 check "conflict, dry run: nothing sent" "$before" "$(received_lines)"
+
+# --- Failed checks ----------------------------------------------------------------------
+JOB=https://github.com/Org/repo/actions/runs/1/job
+SHA=87674b3b1562cf1c56c7ea57727731c7dea25657
+ADVICE='read the log, then fix the cause and push, or re-run the job if the failure is flaky'
+# check_run <name> <status> <conclusion> <job id>
+check_run() {
+  printf '{"__typename":"CheckRun","name":"%s","status":"%s","conclusion":"%s","detailsUrl":"%s/%s"}' "$1" "$2" "$3" "$JOB" "$4"
+}
+failed_run() { check_run "$1" COMPLETED FAILURE "$2"; }
+running_run() { check_run "$1" IN_PROGRESS "" "$2"; }
+# repo_checks <author> <updatedAt> <check>...: Org/repo#10 at head $SHA with
+# these checks, the other watched PRs of Org/repo as repo_open has them.
+repo_checks() {
+  local author="$1" updated="$2" list rest
+  shift 2
+  list=$(IFS=,; echo "$*")
+  rest=$(printf ',{"number":%s,"updatedAt":"%s"}' 11 "$T1" 14 "$T1" 15 "$T1" 18 "$T1" 30 "$T1")
+  printf '[{"number":10,"updatedAt":"%s","mergeable":"MERGEABLE","author":{"login":"%s"},"baseRefName":"master","headRefOid":"%s","statusCheckRollup":[%s]}%s]\n' \
+    "$updated" "$author" "$SHA" "$list" "$rest" >"$STUB_DIR/pr_list_Org_repo.json"
+}
+check_keys() { row checks.tsv Org/repo 10 | cut -f3 | tr '\n' ' ' | sed 's/ $//'; }
+
+# A check that fails while others still run is news at once, on its own.
+fresh
+enrol
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)" "$(running_run 'E2E Tests' 2)" \
+  "$(check_run quality-gate COMPLETED SKIPPED 3)" "$(check_run 'Migration lint' COMPLETED SUCCESS 4)"
+before=$(received_lines)
+run_pass
+wait_for_received_lines $((before + 2))
+check "a failed check on my PR: one NOTIFIED line naming it, its commit, its job and what still runs" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 check Lint & Test failed on 87674b3 ($JOB/1), 1 other check still running: $ADVICE" "$(out)"
+check "a failed check: the inbox got it as an update" \
+  "There is an update on PR https://github.com/Org/repo/pull/10: check Lint & Test failed on 87674b3 ($JOB/1), 1 other check still running: $ADVICE. Check it out whether any action is needed and proceed if it is." \
+  "$(last_message)"
+check "a failed check: checks.tsv has its job, and nothing more is called" "$JOB/1|0|0" \
+  "$(check_keys)|$(count_calls '^gh api')|$(count_calls '^gh pr view')"
+run_pass
+check "still failed next pass: no event" "" "$(out)"
+
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)" "$(failed_run 'E2E Tests' 2)"
+run_pass
+check "another check fails later: told about that one alone" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 check E2E Tests failed on 87674b3 ($JOB/2): $ADVICE" "$(out)"
+check "both failed jobs are in checks.tsv" "$JOB/1 $JOB/2" "$(check_keys)"
+
+repo_checks errmakov-fuse "$T1" "$(running_run 'Lint & Test' 3)" "$(failed_run 'E2E Tests' 2)"
+run_pass
+check "a re-run in progress: no event, the replaced job leaves checks.tsv" "|$JOB/2" "$(out)|$(check_keys)"
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 3)" "$(failed_run 'E2E Tests' 2)"
+run_pass
+check "the re-run fails again: told again, with the new job" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 check Lint & Test failed on 87674b3 ($JOB/3): $ADVICE" "$(out)"
+repo_checks errmakov-fuse "$T1" "$(check_run 'Lint & Test' COMPLETED SUCCESS 4)" "$(check_run 'E2E Tests' COMPLETED SUCCESS 5)"
+run_pass
+check "everything green: no event, checks.tsv has no row for the PR" "|" "$(out)|$(check_keys)"
+
+fresh
+enrol
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)" "$(check_run Build COMPLETED TIMED_OUT 2)" \
+  "$(check_run Old COMPLETED CANCELLED 3)" "$(check_run Info COMPLETED NEUTRAL 4)"
+run_pass
+check "two failed at once: one message names both; cancelled and neutral ones do not count" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 checks Lint & Test ($JOB/1) and Build ($JOB/2) failed on 87674b3: $ADVICE" "$(out)"
+
+fresh
+enrol
+repo_checks errmakov-fuse "$T1" "$(check_run A COMPLETED ERROR 1)" "$(check_run B COMPLETED STARTUP_FAILURE 2)" \
+  "$(check_run C COMPLETED ACTION_REQUIRED 3)" "$(failed_run D 4)" "$(failed_run E 5)"
+run_pass
+check "five failed at once: three named, the rest counted" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 checks A ($JOB/1), B ($JOB/2), C ($JOB/3) and 2 more failed on 87674b3: $ADVICE" "$(out)"
+check "five failed at once: all five recorded" "5" "$(row checks.tsv Org/repo 10 | wc -l | tr -d ' ')"
+
+fresh
+enrol
+repo_checks samrent-infuse "$T1" "$(failed_run 'Lint & Test' 1)"
+run_pass
+check "a teammate's PR with a failed check: no event, nothing recorded" "|" "$(out)|$(check_keys)"
+
+# Turning the notices on does not wake every session whose PR is already red.
+fresh
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)"
+run_pass
+check "the first pass with failed-check notices: no event, the failure recorded and logged" "|$JOB/1|1" \
+  "$(out)|$(check_keys)|$(grep -c 'Org/repo#10 already had failed checks when failed-check notices started' "$STATE/poll.log")"
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)" "$(failed_run Build 2)"
+run_pass
+check "after the first pass, a new failure is news" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 check Build failed on 87674b3 ($JOB/2): $ADVICE" "$(out)"
+fresh
+run_pass
+check "the first pass writes checks.tsv even with nothing failed" "present" "$(exists checks.tsv)"
+
+fresh
+enrol
+sed -i "/^Org\/repo${T}10${T}/d" "$D/seen.tsv"
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)"
+run_pass
+check "a failed check at first sight of the PR is news" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 check Lint & Test failed on 87674b3 ($JOB/1): $ADVICE" "$(out)"
+
+fresh
+enrol
+printf '[{"number":10,"updatedAt":"%s","mergeable":"CONFLICTING","author":{"login":"errmakov-fuse"},"baseRefName":"master","headRefOid":"%s","statusCheckRollup":[%s]},{"number":11,"updatedAt":"%s"},{"number":14,"updatedAt":"%s"},{"number":15,"updatedAt":"%s"},{"number":18,"updatedAt":"%s"},{"number":30,"updatedAt":"%s"}]\n' \
+  "$T1" "$SHA" "$(failed_run 'Lint & Test' 1)" "$T1" "$T1" "$T1" "$T1" "$T1" >"$STUB_DIR/pr_list_Org_repo.json"
+run_pass
+check "a conflict and a failed check in one pass: one message, both recorded" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 $CONFLICT; check Lint & Test failed on 87674b3 ($JOB/1): $ADVICE|1|$JOB/1" \
+  "$(out)|$(row conflicts.tsv Org/repo 10 | wc -l | tr -d ' ')|$(check_keys)"
+
+# One integration often gives all its statuses one link.
+fresh
+enrol
+repo_checks errmakov-fuse "$T1" '{"__typename":"StatusContext","context":"scan/a","state":"FAILURE","targetUrl":"https://github.com/Org/repo/runs/9"}'
+run_pass
+repo_checks errmakov-fuse "$T1" '{"__typename":"StatusContext","context":"scan/a","state":"FAILURE","targetUrl":"https://github.com/Org/repo/runs/9"}' \
+  '{"__typename":"StatusContext","context":"scan/b","state":"FAILURE","targetUrl":"https://github.com/Org/repo/runs/9"}' \
+  '{"__typename":"CheckRun","name":"Elsewhere","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://ci.example/job/7"}'
+run_pass
+check "statuses sharing a link are told apart; a link off github.com is dropped" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 checks scan/b (https://github.com/Org/repo/runs/9) and Elsewhere failed on 87674b3: $ADVICE" "$(out)"
+check "statuses sharing a link: keyed by name and link" \
+  "scan/a@https://github.com/Org/repo/runs/9 scan/b@https://github.com/Org/repo/runs/9 Elsewhere@$SHA" "$(check_keys)"
+
+fresh
+enrol
+repo_checks errmakov-fuse "$T2" "$(failed_run 'Lint & Test' 1)"
+answer comments_10.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "a comment and a failed check in one pass: one message with both" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse; check Lint & Test failed on 87674b3 ($JOB/1): $ADVICE" "$(out)"
+
+# A commit status has no job; one without a usable link is named alone, and
+# what GitHub gives as its name or link cannot break the message.
+fresh
+enrol
+repo_checks errmakov-fuse "$T1" '{"__typename":"StatusContext","context":"ci/jenkins","state":"ERROR","targetUrl":null}' \
+  '{"__typename":"StatusContext","context":"evil\nname\tx","state":"FAILURE","targetUrl":"javascript:alert(1)"}' \
+  '{"__typename":"StatusContext","context":"ci/other","state":"PENDING","targetUrl":"https://ci.example/2"}'
+run_pass
+check "failed commit statuses: named without a link, control characters as spaces, the pending one counted" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 checks ci/jenkins and evil name x failed on 87674b3, 1 other check still running: $ADVICE" "$(out)"
+check "failed commit statuses: keyed by name and commit" "ci/jenkins@$SHA evil name x@$SHA" "$(check_keys)"
+run_pass
+check "failed commit statuses: not told twice" "" "$(out)"
+
+fresh PR_UPDATE_RESUME_RETIRED=false
+enrol
+printf '[{"number":5,"updatedAt":"%s","mergeable":"MERGEABLE","author":{"login":"errmakov-fuse"},"baseRefName":"master","headRefOid":"%s","statusCheckRollup":[%s]},{"number":6,"updatedAt":"%s"}]\n' \
+  "$T1" "$SHA" "$(failed_run 'Lint & Test' 1)" "$T1" >"$STUB_DIR/pr_list_Org_other.json"
+run_pass
+check "a failed check, resumes off: WAITING once, recorded as told" \
+  "WAITING Org/other#5 bbbb2222 check Lint & Test failed on 87674b3 ($JOB/1): $ADVICE|$JOB/1" \
+  "$(out)|$(row checks.tsv Org/other 5 | cut -f3)"
+run_pass
+check "a failed check, resumes off: the next pass is silent" "" "$(out)"
+
+fresh
+enrol
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)"
+HOOK="$STATE/hook.sh"
+echo 'pending_get() { return 1; }' >"$HOOK"
+run_pass
+check "a failed check, the ledger read fails: no event, not recorded" "|" "$(out)|$(check_keys)"
+HOOK=""
+run_pass
+check "a failed check, the ledger works again: told" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 check Lint & Test failed on 87674b3 ($JOB/1): $ADVICE" "$(out)"
+
+open_prs Org/repo "11 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+echo '{"state":"MERGED","mergedBy":{"login":"errmakov-fuse"}}' >"$STUB_DIR/pr_view_10.json"
+run_pass
+check "a merged PR's failed-check rows go with it" "" "$(check_keys)"
+
+fresh
+enrol
+repo_checks errmakov-fuse "$T1" "$(failed_run 'Lint & Test' 1)"
+before=$(received_lines)
+run_pass --dry-run
+check "a failed check, dry run: DRY_RUN line, nothing recorded" \
+  "DRY_RUN NOTIFIED Org/repo#10 inbox aaaa1111 check Lint & Test failed on 87674b3 ($JOB/1): $ADVICE|" \
+  "$(out)|$(check_keys)"
+sleep 0.3
+check "a failed check, dry run: nothing sent" "$before" "$(received_lines)"
 
 # --- Dry run and backfill ---------------------------------------------------------------
 fresh

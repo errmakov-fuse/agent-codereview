@@ -11,12 +11,38 @@ READ_STDIN='const data = JSON.parse(require("fs").readFileSync(0, "utf8"));'
 # than any time for ever; it is left out, and how many were is the only stderr.
 # A missing mergeable, author or base prints as -: bash's read folds empty tab
 # columns together, and whitespace in a value would shift the columns after it.
+# The checks columns (see open_prs_of) read statusCheckRollup as classify.jq's
+# check_states does. A name or link comes from whoever runs the check, and goes
+# to an unattended session: a name loses its control characters and is cut at
+# 100 characters, and a link is kept only when it is on https://github.com/.
 PARSE_PR_LIST="$READ_STDIN"'
 const kept = data.filter((pr) => pr && typeof pr.updatedAt === "string" && pr.updatedAt);
 const word = (value) => (typeof value === "string" && value.replace(/\s/g, "")) || "-";
+const text = (value) => (typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 100) : "");
+const link = (value) => (typeof value === "string" && /^https:\/\/github\.com\/[^\s\u0000-\u001f\u007f]+$/.test(value) ? value : "");
+const FAILED = ["FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED"];
+const checks = (pr) => {
+  const head = word(pr.headRefOid);
+  let running = 0;
+  const failed = [];
+  for (const c of Array.isArray(pr.statusCheckRollup) ? pr.statusCheckRollup : []) {
+    if (!c) continue;
+    const status = c.__typename === "StatusContext" ? c.state || "PENDING"
+      : (c.status || "COMPLETED") !== "COMPLETED" ? "PENDING" : c.conclusion || "";
+    if (status === "PENDING" || status === "EXPECTED") running++;
+    if (!FAILED.includes(status)) continue;
+    const name = text(c.__typename === "StatusContext" ? c.context : c.name) || "unnamed";
+    const status_context = c.__typename === "StatusContext";
+    const url = link(status_context ? c.targetUrl : c.detailsUrl);
+    // A job link names one run; one integration often gives all its statuses one link.
+    const key = !status_context && url ? url : name + "@" + (url || head);
+    failed.push([key, name, url].join("\u001f"));
+  }
+  return [head, running, failed.join("\u001e") || "-"];
+};
 if (kept.length < data.length) process.stderr.write(String(data.length - kept.length));
 process.stdout.write(kept.map((pr) => [pr.number, pr.updatedAt, word(pr.mergeable),
-  word(pr.author && pr.author.login), word(pr.baseRefName)].join("\t") + "\n").join(""));'
+  word(pr.author && pr.author.login), word(pr.baseRefName), ...checks(pr)].join("\t") + "\n").join(""));'
 PARSE_PR_VIEW="$READ_STDIN"'
 process.stdout.write((data.state || "") + "\t" + ((data.mergedBy && data.mergedBy.login) || "") + "\n");'
 PARSE_CLOSER="$READ_STDIN"'
@@ -47,15 +73,19 @@ gh_log_err() {
   cat "$scratch/gh_err" >>"$LOG"
 }
 
-# "<n>\t<updatedAt>\t<mergeable>\t<author>\t<base branch>" for each open PR of a
-# repository; mergeable is MERGEABLE, CONFLICTING or UNKNOWN (GitHub works it
-# out lazily, so UNKNOWN is common right after a push to the base branch). Status 2 when GitHub
+# "<n>\t<updatedAt>\t<mergeable>\t<author>\t<base branch>\t<head sha>\t<running>\t<failed>"
+# for each open PR of a repository; mergeable is MERGEABLE, CONFLICTING or
+# UNKNOWN (GitHub works it out lazily, so UNKNOWN is common right after a push
+# to the base branch). <running> counts the checks not finished yet; <failed>
+# is - or the failed checks, split by \x1e, each "<key>\x1f<name>\x1f<link>":
+# the key is a check run's job link, else "<name>@<link>" for a commit status,
+# else "<name>@<head sha>", and the link may be empty. Status 2 when GitHub
 # would not resolve the repository, 1 when gh fails otherwise, 4 when the list
 # had PRs without an updatedAt: those are left out, so the list is not complete.
 # Each such repository goes into $scratch/no_updated_at, logged once a pass.
 open_prs_of() {
   local list parsed skipped
-  if ! list=$(gh_quiet pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt,mergeable,author,baseRefName); then
+  if ! list=$(gh_quiet pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt,mergeable,author,baseRefName,headRefOid,statusCheckRollup); then
     grep -q "$REPO_UNRESOLVED" "$scratch/gh_err" && return 2
     gh_log_err
     return 1

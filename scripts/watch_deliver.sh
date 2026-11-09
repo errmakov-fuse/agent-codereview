@@ -9,6 +9,8 @@ MERGED_MESSAGE='PR %s was merged. Nothing is left to do on it; clean up its work
 CLOSED_MESSAGE='PR %s was closed without merging. Nothing is left to do on it; clean up its worktree and branch if you still have them.'
 # The summary of an update telling a session its PR conflicts with <base>.
 CONFLICT_SUMMARY='merge conflicts with %s: rebase it onto %s, resolve them, run the tests and push'
+# What closes the summary of an update telling a session its PR's checks failed.
+CHECKS_ADVICE='read the log, then fix the cause and push, or re-run the job if the failure is flaky'
 MAX_DELIVERY_ATTEMPTS=2
 # Claude Code's registry of running sessions, one <pid>.json each.
 CLAUDE_REGISTRY="${CLAUDE_HOME:-$HOME/.claude}/sessions"
