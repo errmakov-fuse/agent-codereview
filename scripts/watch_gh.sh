@@ -42,7 +42,30 @@ const checks = (pr) => {
 };
 if (kept.length < data.length) process.stderr.write(String(data.length - kept.length));
 process.stdout.write(kept.map((pr) => [pr.number, pr.updatedAt, word(pr.mergeable),
-  word(pr.author && pr.author.login), word(pr.baseRefName), ...checks(pr)].join("\t") + "\n").join(""));'
+  word(pr.author && pr.author.login), word(pr.baseRefName), word(pr.mergeStateStatus), ...checks(pr)].join("\t") + "\n").join(""));'
+# "<count>\t<summary>" of a PR's unresolved review threads, the summary naming
+# the first MAX_NAMED_THREADS as "<author> at <path>:<line>". The values come
+# from whoever commented, so they lose control characters and are cut short.
+PARSE_THREADS="$READ_STDIN"'
+const MAX_NAMED_THREADS = 3;
+const text = (value, max) => (typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, max) : "");
+const pr = data && data.data && data.data.repository && data.data.repository.pullRequest;
+if (!pr || !pr.reviewThreads || !Array.isArray(pr.reviewThreads.nodes)) throw new Error("no reviewThreads in the answer");
+const open = pr.reviewThreads.nodes.filter((t) => t && t.isResolved === false);
+const named = open.slice(0, MAX_NAMED_THREADS).map((t) => {
+  const first = t.comments && Array.isArray(t.comments.nodes) && t.comments.nodes[0];
+  const who = text(first && first.author && first.author.login, 40) || "someone";
+  const line = t.line || t.originalLine;
+  const where = text(t.path, 120);
+  return where ? who + " at " + where + (line ? ":" + line : "") : who;
+});
+if (open.length > MAX_NAMED_THREADS) named.push(open.length - MAX_NAMED_THREADS + " more");
+const list = named.length > 1 ? named.slice(0, -1).join(", ") + " and " + named[named.length - 1] : named.join("");
+process.stdout.write(open.length + "\t" + list + "\n");'
+THREADS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    reviewThreads(first: 100) { nodes { isResolved path line originalLine
+      comments(first: 1) { nodes { author { login } } } } } } } }'
 PARSE_PR_VIEW="$READ_STDIN"'
 process.stdout.write((data.state || "") + "\t" + ((data.mergedBy && data.mergedBy.login) || "") + "\n");'
 PARSE_CLOSER="$READ_STDIN"'
@@ -73,10 +96,12 @@ gh_log_err() {
   cat "$scratch/gh_err" >>"$LOG"
 }
 
-# "<n>\t<updatedAt>\t<mergeable>\t<author>\t<base branch>\t<head sha>\t<running>\t<failed>"
+# "<n>\t<updatedAt>\t<mergeable>\t<author>\t<base branch>\t<merge state>\t<head sha>\t<running>\t<failed>"
 # for each open PR of a repository; mergeable is MERGEABLE, CONFLICTING or
 # UNKNOWN (GitHub works it out lazily, so UNKNOWN is common right after a push
-# to the base branch). <running> counts the checks not finished yet; <failed>
+# to the base branch). The merge state is GitHub's mergeStateStatus: CLEAN,
+# BLOCKED (a rule such as an approval or resolved threads is missing), BEHIND,
+# DIRTY, UNSTABLE, HAS_HOOKS, DRAFT or UNKNOWN. <running> counts the checks not finished yet; <failed>
 # is - or the failed checks, split by \x1e, each "<key>\x1f<name>\x1f<link>":
 # the key is a check run's job link, else "<name>@<link>" for a commit status,
 # else "<name>@<head sha>", and the link may be empty. Status 2 when GitHub
@@ -85,7 +110,7 @@ gh_log_err() {
 # Each such repository goes into $scratch/no_updated_at, logged once a pass.
 open_prs_of() {
   local list parsed skipped
-  if ! list=$(gh_quiet pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt,mergeable,author,baseRefName,headRefOid,statusCheckRollup); then
+  if ! list=$(gh_quiet pr list --repo "$1" --state open --limit "$MAX_OPEN_PRS" --json number,updatedAt,mergeable,author,baseRefName,mergeStateStatus,headRefOid,statusCheckRollup); then
     grep -q "$REPO_UNRESOLVED" "$scratch/gh_err" && return 2
     gh_log_err
     return 1
@@ -126,6 +151,14 @@ pr_state() {
   fi
   gh_log_err
   printf '%s' "$view" | node -e "$PARSE_PR_VIEW" 2>>"$LOG"
+}
+
+# "<count>\t<summary>" of a PR's unresolved review threads (PARSE_THREADS). One
+# GraphQL call; fails when gh does or the answer cannot be read.
+unresolved_threads_of() {
+  local answer
+  answer=$(gh api graphql -f query="$THREADS_QUERY" -f owner="${1%%/*}" -f name="${1#*/}" -F number="$2" 2>>"$LOG" </dev/null) || return 1
+  printf '%s' "$answer" | node -e "$PARSE_THREADS" 2>>"$LOG"
 }
 
 # Who closed a PR: the actor of its last "closed" timeline event, or nothing.

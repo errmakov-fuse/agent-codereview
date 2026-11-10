@@ -18,6 +18,11 @@
 #                 "<name>@<link or head sha>"); a row leaves when that check stops
 #                 failing. Its absence means failed-check notices never ran here:
 #                 that pass records the failures without telling (checks_seeding)
+#   merge_state.tsv  repo, PR number, head sha, updatedAt, state, since (ISO): what
+#                 the last pass made of one of my green PRs (merge_step): ready (I
+#                 was told it can be merged), threads or behind (its session was
+#                 told what blocks it) or waiting (blocked on something else, such
+#                 as an approval); a new state or head is acted on again
 #   unreachable.tsv  repo, first failure (ISO): a repository GitHub would not
 #                 resolve (deleted, or hidden from the current gh account), kept
 #                 until a pass reads it again, so the outage is logged once
@@ -39,6 +44,7 @@ WATCH_CLOSED="$PR_UPDATES_DIR/closed.txt"
 WATCH_UNREACHABLE="$PR_UPDATES_DIR/unreachable.tsv"
 WATCH_CONFLICTS="$PR_UPDATES_DIR/conflicts.tsv"
 WATCH_CHECKS="$PR_UPDATES_DIR/checks.tsv"
+WATCH_MERGE_STATE="$PR_UPDATES_DIR/merge_state.tsv"
 WATCH_SCAN="$PR_UPDATES_DIR/scan.tsv"
 WATCH_LOCK="$PR_UPDATES_DIR/lock"
 SECONDS_PER_DAY=86400
@@ -328,6 +334,23 @@ checks_rows_with() {
 
 checks_drop() {
   watch_drop_rows "$WATCH_CHECKS" "$1" "$2"
+}
+
+# --- Merge state -------------------------------------------------------------
+
+# "<head sha>\t<updatedAt>\t<state>\t<since>" for a PR, or nothing.
+merge_state_get() {
+  watch_row_rest "$WATCH_MERGE_STATE" "$1" "$2"
+}
+
+# merge_state_set <repo> <n> <head sha> <updatedAt> <state>
+merge_state_set() {
+  watch_put_row "$WATCH_MERGE_STATE" "$1" "$2" \
+    "$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4" "$5" "$(date -u +%FT%TZ)")"
+}
+
+merge_state_drop() {
+  watch_drop_rows "$WATCH_MERGE_STATE" "$1" "$2"
 }
 
 # --- Unreachable repositories ------------------------------------------------

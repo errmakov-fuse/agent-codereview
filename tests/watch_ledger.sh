@@ -194,6 +194,18 @@ check "checks_save of nothing drops the PR's rows and leaves the others" "|https
 checks_drop Org/r 10
 check "checks_drop removes the PR's rows" "" "$(checks_known Org/r 10)"
 
+# --- Merge state ---------------------------------------------------------------
+check "merge_state_get with no file is empty and fine" "|0" "$(merge_state_get Org/r 1)|$?"
+merge_state_set Org/r 1 abc T1 ready
+merge_state_set Org/r 10 def T2 waiting
+merge_state_set Org/r 1 abc T3 threads
+check "merge_state_set keeps one row per PR: head, updatedAt, state and an ISO time" "1|abc${T}T3${T}threads" \
+  "$(grep -c "^Org/r${T}1$T" "$D/merge_state.tsv")|$(merge_state_get Org/r 1 | cut -f1-3)"
+check "merge_state_get does not match a number prefix" "def" "$(merge_state_get Org/r 10 | cut -f1)"
+merge_state_drop Org/r 1
+check "merge_state_drop removes the PR's row and leaves the others" "|def" \
+  "$(merge_state_get Org/r 1)|$(merge_state_get Org/r 10 | cut -f1)"
+
 # --- A failed read never becomes a file without its rows ----------------------
 printf 'Org/r\t1\ta\nOrg/r\t2\tb\nOrg/r\t3\tc\n' >"$D/rows.tsv"
 rows_before=$(cat "$D/rows.tsv")
