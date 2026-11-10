@@ -1,0 +1,6 @@
+[{"bucket":"fail","description":"1 credential(s) committed by this change","link":"https://scan.example/report?id=1","name":"S.Y.S.T.E.M / open the scan report","state":"FAILURE","workflow":""},
+{"bucket":"fail","description":"","link":"https://github.com/Org/repo/actions/runs/1","name":"Lint & Test","state":"FAILURE","workflow":"Test"},
+{"bucket":"pending","description":"","link":"https://github.com/Org/repo/actions/runs/2","name":"E2E Tests","state":"IN_PROGRESS","workflow":"E2E Tests"},
+{"bucket":"pending","description":"Building","link":"","name":"deploy-preview","state":"PENDING","workflow":""},
+{"bucket":"pass","description":"","link":"https://github.com/Org/repo/actions/runs/3","name":"validate-pair","state":"SUCCESS","workflow":"Quality Gate"},
+{"bucket":"skipping","description":"","link":"https://github.com/Org/repo/actions/runs/4","name":"quality-gate","state":"SKIPPED","workflow":"Quality Gate"}]
