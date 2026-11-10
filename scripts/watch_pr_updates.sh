@@ -19,9 +19,16 @@
 #      pass without a checks.tsv records the failures silently (checks_seeding).
 #      Neither a merge conflict nor a check moves updatedAt, so this costs no
 #      extra call.
-#   4. A watched PR gone from the open list gets one closing notice, only when
-#      its owner is live and the merger or closer is not one of MY_LOGINS, and
-#      leaves the watch list. One already closed when first seen gets no notice.
+#      Once one of MY_LOGINS' PRs is green, GitHub's mergeStateStatus from the
+#      same list says what is left (merge_step): CLEAN prints READY_TO_MERGE
+#      once per head, for me to merge; BLOCKED on unresolved review threads, or
+#      BEHIND its base, tells its session what blocks it. Threads cost one
+#      GraphQL call, made only when such a PR is BLOCKED and moved, or has news
+#      (its news then names them too).
+#   4. A watched PR gone from the open list gets one closing notice and leaves
+#      the watch list. A merge notice goes to a live owner, or resumes a retired
+#      one when a resume can go in this pass. A close notice goes to a live
+#      owner only, and not when one of MY_LOGINS closed it. One already closed when first seen gets no notice.
 #      So does a PR GitHub says does not exist. A repository GitHub will not
 #      resolve (deleted, or hidden from the current gh account) keeps its PRs
 #      and is skipped until it resolves again (unreachable.tsv; logged once).
@@ -45,6 +52,8 @@
 #   NOT_DELIVERED <owner/repo>#<n> <session short id> <why>     tried again next pass
 #   WATCH_GAVE_UP <owner/repo>#<n> <session short id>           the message is in poll.log
 #   CAPPED_UPDATES <owner/repo>#<n> <count>
+#   READY_TO_MERGE <owner/repo>#<n> <head short sha>   one of my PRs is green and
+#                               GitHub lets it merge; said once per head
 #   WAITING <owner/repo>#<n> <session short id> <summary>      the session is retired and
 #                               PR_UPDATE_RESUME_RETIRED is off; said once per new update
 #   WATCH_FAILED <why>          the sessions could not be listed; exit 1
@@ -196,8 +205,28 @@ fetch_updates() {
     return 1
   fi
   seen_set "$repo" "$n" "$updated" "$newest"
+  summary=$(with_open_threads "$repo" "$n" "$summary")
   queue_update "$repo" "$n" "$old" "$(join_news "$summary" "$note")"
   return 0
+}
+
+# News on one of MY_LOGINS' PRs names its unresolved review threads too, so the
+# session answers each inside its thread; a thread answered only in a PR comment
+# stays open and keeps the PR from merging. Unchanged for other PRs, for no
+# news, when this pass's notice names the threads already, or when they cannot
+# be read (logged; the news still goes).
+with_open_threads() {
+  local repo="$1" n="$2" summary="$3" phrase
+  if [ "$pr_is_mine" != 1 ] || [ -z "$summary" ] || { [ "$merge_next" = threads ] && [ -n "$merge_news" ]; }; then
+    printf '%s' "$summary"
+    return 0
+  fi
+  if [ -z "$pr_threads" ] && ! pr_threads=$(unresolved_threads_of "$repo" "$n"); then
+    log "reading the review threads of $repo#$n failed; its news goes without them"
+    pr_threads=""
+  fi
+  phrase=$(threads_phrase "$pr_threads")
+  printf '%s' "$summary${phrase:+; $phrase}"
 }
 
 # "<a>; <b>", or whichever of the two is not empty.
@@ -311,7 +340,7 @@ checks_note() {
 # while others still run (checks_note). A teammate's PR is never news this way:
 # the session that mentioned it must not rebase or fix someone else's branch.
 check_open() {
-  local repo="$1" n="$2" updated="$3" mergeable="$4" author="$5" base="$6" head="$7" running="$8" failed="$9"
+  local repo="$1" n="$2" updated="$3" mergeable="$4" author="$5" base="$6" merge_state="$7" head="$8" running="$9" failed="${10}"
   local note="" mine=0
   is_mine "$author" && mine=1
   [ "$base" = - ] && base="its base branch"
@@ -335,11 +364,77 @@ check_open() {
     log "$repo#$n already had failed checks when failed-check notices started; recorded, not told: $checks_news"
     checks_news=""
   fi
-  check_pr "$repo" "$n" "$updated" "$(join_news "$note" "$checks_news")" || return
+  merge_news="" merge_ready=0 merge_next=keep pr_threads="" pr_is_mine="$mine"
+  if [ "$mine" -eq 1 ] && ! merge_step "$repo" "$n" "$head" "$updated" "$merge_state" "$base" "$running" "$failed"; then
+    log "reading the merge state of $repo#$n failed; trying again next pass"
+    return 1
+  fi
+  check_pr "$repo" "$n" "$updated" "$(join_news "$(join_news "$note" "$checks_news")" "$merge_news")" || return
   [ -z "$note" ] || conflict_add "$repo" "$n"
+  if [ "$merge_next" != keep ]; then
+    merge_state_set "$repo" "$n" "$head" "$updated" "$merge_next" || log "could not record the merge state of $repo#$n"
+    [ "$merge_ready" -eq 1 ] && event "READY_TO_MERGE $repo#$n ${head:0:7}"
+  fi
   [ "$(printf '%s\n' "${checks_now[@]}" | sed '/^$/d')" = "$checks_had" ] && return 0
   checks_save "$repo" "$n" "${checks_now[@]}" || log "could not record the failed checks of $repo#$n"
   return 0
+}
+
+# "1 unresolved review thread (<who> at <where>)", or the plural, from an
+# unresolved_threads_of line; nothing when there are none.
+threads_phrase() {
+  local count="${1%%$'\t'*}" list="${1#*$'\t'}"
+  [ "$count" -gt 0 ] 2>/dev/null || return 0
+  printf '%s unresolved review thread%s%s' "$count" "$([ "$count" -eq 1 ] || echo s)" "${list:+ ($list)}"
+}
+
+# merge_step <repo> <n> <head sha> <updatedAt> <merge state> <base> <running>
+# <failed>: the last step of one of MY_LOGINS' PRs, once its checks are done and
+# none failed. GitHub letting it merge (CLEAN) means I am told it is ready
+# (merge_ready; merging is mine to do). GitHub blocking it on unresolved review
+# threads, or because the branch is behind its base, means its session is told
+# what blocks it (merge_news). Each is said once per head and state
+# (merge_state.tsv), and BLOCKED for another reason (an approval still to come:
+# stalled.sh asks for it) is recorded as waiting. Threads are asked for only
+# when the PR is BLOCKED and moved since the last answer. Sets merge_next to the
+# state to record, or keep. Fails when merge_state.tsv cannot be read.
+merge_step() {
+  local repo="$1" n="$2" head="$3" updated="$4" state="$5" base="$6" running="$7" failed="$8"
+  local row had_head="" had_updated="" had_state=""
+  row=$(merge_state_get "$repo" "$n") || return 1
+  [ -n "$row" ] && IFS=$'\t' read -r had_head had_updated had_state _ <<<"$row"
+  [ "$running" = 0 ] && [ "$failed" = - ] && [ "$head" != - ] || return 0
+  case "$state" in
+    CLEAN | HAS_HOOKS) merge_next=ready ;;
+    BEHIND) merge_next=behind ;;
+    BLOCKED)
+      if [ "$had_head" = "$head" ] && [ "$had_updated" = "$updated" ] &&
+        { [ "$had_state" = waiting ] || [ "$had_state" = threads ]; }; then
+        merge_next="$had_state"
+      elif ! pr_threads=$(unresolved_threads_of "$repo" "$n") || [ -z "$pr_threads" ]; then
+        log "reading the review threads of $repo#$n failed; looking again next pass"
+        pr_threads=""
+        return 0
+      elif [ -n "$(threads_phrase "$pr_threads")" ]; then
+        merge_next=threads
+      else
+        merge_next=waiting
+      fi
+      ;;
+    *) return 0 ;; # still being worked out, in conflict (told apart), a draft
+  esac
+  if [ "$had_head" = "$head" ] && [ "$had_state" = "$merge_next" ]; then
+    # Told already; the row moves only to remember a newer updatedAt.
+    [ "$had_updated" = "$updated" ] && merge_next=keep
+    return 0
+  fi
+  case "$merge_next" in
+    ready) merge_ready=1 ;;
+    # shellcheck disable=SC2059
+    behind) merge_news=$(printf "$BEHIND_SUMMARY" "$base" "$base") ;;
+    # shellcheck disable=SC2059
+    threads) merge_news=$(printf "$THREADS_BLOCK_SUMMARY" "$(threads_phrase "$pr_threads")") ;;
+  esac
 }
 
 # Takes a PR off the watch list for good, without a notice.
@@ -349,16 +444,19 @@ forget_pr() {
   pending_drop "$1" "$2"
   conflict_drop "$1" "$2"
   checks_drop "$1" "$2"
+  merge_state_drop "$1" "$2"
 }
 
-# The closing notice for a merged or closed PR, unless one of MY_LOGINS did it.
+# The closing notice for a merged or closed PR. A merge always gets one, since
+# I merge my own PRs and the session may have a step to do after it; a close by
+# one of MY_LOGINS gets none.
 notify_closed() {
   local repo="$1" n="$2" state="$3" closer="$4" kind=merged
   if [ "$state" = CLOSED ]; then
     kind=closed
     closer=$(closer_of "$repo" "$n") || return 1
+    is_mine "$closer" && return 0
   fi
-  is_mine "$closer" && return 0
   deliver "$repo" "$n" "$kind${closer:+ by $closer}" "$kind"
   return 0
 }
@@ -434,7 +532,7 @@ repo_unreachable() {
 # or a repository GitHub stops resolving, skips the repository for this pass;
 # a PR that cannot be read otherwise waits for the next pass on its own.
 check_repo() {
-  local repo="$1" open status complete=0 n row updated mergeable author base head running failed
+  local repo="$1" open status complete=0 n row updated mergeable author base merge_state head running failed
   open=$(open_prs_of "$repo")
   status=$?
   case "$status" in
@@ -457,8 +555,8 @@ check_repo() {
     if [ -z "$row" ]; then
       settle_closed "$repo" "$n" "$complete"
     else
-      IFS=$'\t' read -r _ updated mergeable author base head running failed <<<"$row"
-      check_open "$repo" "$n" "$updated" "$mergeable" "$author" "$base" "$head" "$running" "$failed"
+      IFS=$'\t' read -r _ updated mergeable author base merge_state head running failed <<<"$row"
+      check_open "$repo" "$n" "$updated" "$mergeable" "$author" "$base" "$merge_state" "$head" "$running" "$failed"
     fi
     status=$?
     [ "$status" -eq 0 ] && continue

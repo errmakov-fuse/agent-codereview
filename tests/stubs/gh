@@ -8,6 +8,9 @@
 #   gh api repos/O/R/pulls/<n>/comments?...      review_comments_<n>.json
 #   gh api repos/O/R/pulls/<n>/reviews?...       reviews_<n>.json
 #   gh api repos/O/R/issues/<n>/timeline?...     timeline_<n>.json
+#   gh api graphql ... -F number=<n>             threads_<n>.json, logged as one
+#                                                line "gh api graphql O/R#<n>"; a
+#                                                missing file answers no threads
 #
 # A missing file answers []. Failures, each switched on by a file in $STUB_DIR:
 #
@@ -17,6 +20,30 @@
 #   nopr_<n>        gh pr view <n> fails with "no pull requests found"
 #   hidden_<n>      gh pr view <n> fails as for a repository it cannot see
 #   fail_view_<n>   gh pr view <n> fails with HTTP 502
+#   fail_threads_<n>  gh api graphql for <n> fails with HTTP 502
+
+# The thread query spans lines; it is logged and answered on its own.
+if [ "$1 $2" = "api graphql" ]; then
+  owner="" name="" n=""
+  for arg in "$@"; do
+    case "$arg" in
+      owner=*) owner="${arg#owner=}" ;;
+      name=*) name="${arg#name=}" ;;
+      number=*) n="${arg#number=}" ;;
+    esac
+  done
+  echo "gh api graphql $owner/$name#$n" >>"$STUB_DIR/calls.log"
+  if [ -e "$STUB_DIR/fail_threads_$n" ]; then
+    echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
+    exit 1
+  fi
+  if [ -f "$STUB_DIR/threads_$n.json" ]; then
+    cat "$STUB_DIR/threads_$n.json"
+  else
+    echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+  fi
+  exit 0
+fi
 
 echo "gh $*" >>"$STUB_DIR/calls.log"
 

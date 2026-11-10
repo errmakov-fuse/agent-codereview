@@ -14,8 +14,10 @@
 # The PR update watcher's events:
 #
 #   NOTIFIED <repo>#<n> <inbox|resume> <id> <summary>   "PR #n: update",
-#                                                       "PR #n: merge conflicts", or
-#                                                       "PR #n: failed checks"
+#                                                       "PR #n: merge conflicts",
+#                                                       "PR #n: failed checks", or
+#                                                       "PR #n: merge blocked"
+#   READY_TO_MERGE <repo>#<n> <head>                    "PR #n: ready to merge"
 #   NOT_DELIVERED <repo>#<n> <id> <why>                 "PR #n: session <id> not reached"
 #   WATCH_GAVE_UP <repo>#<n> <id>                       "PR #n: carry the message by hand"
 #   CAPPED_UPDATES <repo>#<n> <count>                   "PR #n: update not forwarded"
@@ -112,6 +114,7 @@ $ErrorActionPreference = 'Continue'
             $did = if ($words[2] -eq 'resume') { 'Resumed' } else { 'Sent to' }
             $what = if ($words[4] -like '*merge conflicts with*') { 'merge conflicts' }
                     elseif ($words[4] -match '(^|; )checks? .+ failed on ') { 'failed checks' }
+                    elseif ($words[4] -like '*GitHub blocks the merge*') { 'merge blocked' }
                     else { 'update' }
             Show-Toast "PR ${pr}: $what" "$($words[4]). $did session $($words[3])."
         }
@@ -119,6 +122,7 @@ $ErrorActionPreference = 'Continue'
         'WATCH_GAVE_UP' { Show-Toast "PR ${pr}: carry the message by hand" "Session $($words[2]) could not be reached twice." }
         'WAITING' { Show-Toast "PR ${pr}: update waiting" "$(($words | Select-Object -Skip 3) -join ' '). Session $($words[2]) is asleep and automatic resumes are off." }
         'CAPPED_UPDATES' { Show-Toast "PR ${pr}: update not forwarded" "$($words[2]) messages today already (PR_UPDATE_MAX_PER_PR_PER_DAY)." }
+        'READY_TO_MERGE' { Show-Toast "PR ${pr}: ready to merge" "Checks are green and GitHub lets it merge ($($words[2])). Merging is yours." }
         'WATCH_FAILED' { Show-Toast 'PR watcher cannot list sessions' 'See state\poll.log.' }
     }
 }

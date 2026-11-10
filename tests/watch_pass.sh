@@ -34,6 +34,8 @@ T3=2026-01-03T00:00:00Z
 F1=2099-01-01T00:00:00Z
 F2=2099-01-02T00:00:00Z
 OLD=2020-01-01T00:00:00Z
+# The end of every update message: what "done" means on the session's own PR.
+YOUR_PR='If it is your PR: fix or answer every finding, minor ones and those inside approvals included; reply inside each review thread and resolve it once your fix is pushed; for anything you cannot do yourself, say in the thread who must do it and @-mention them.'
 
 failed=0
 check() {
@@ -221,7 +223,7 @@ wait_for_received_lines $((before + 2))
 check "an update: one NOTIFIED line by inbox" \
   "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse" "$(out)"
 check "the inbox got the update message" \
-  "There is an update on PR https://github.com/Org/repo/pull/10: 1 comment from samrent-infuse. Check it out whether any action is needed and proceed if it is." \
+  "There is an update on PR https://github.com/Org/repo/pull/10: 1 comment from samrent-infuse. Check it out whether any action is needed and proceed if it is. $YOUR_PR" \
   "$(last_message)"
 check "the inbox got the auth frame first" '{"type":"auth","token":"tok"}' "$(tail -n 2 "$RECEIVED" | head -n 1)"
 check "sent.log has one ok row" "1" "$(awk -F'\t' '$6 == "ok"' "$D/sent.log" | wc -l | tr -d ' ')"
@@ -255,7 +257,7 @@ other_open "5 $T2" "6 $T1"
 answer reviews_5.json "$(review samrent-infuse CHANGES_REQUESTED "$F1")"
 run_pass
 check "retired owner: one resume call with the whole message as one argument" \
-  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: a review requesting changes from samrent-infuse. Check it out whether any action is needed and proceed if it is." \
+  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: a review requesting changes from samrent-infuse. Check it out whether any action is needed and proceed if it is. $YOUR_PR" \
   "$(calls | grep '^resume')"
 check "retired owner: NOTIFIED by resume" \
   "NOTIFIED Org/other#5 resume bbbb2222 a review requesting changes from samrent-infuse" "$(out)"
@@ -283,7 +285,7 @@ enrol
 printf 'Org/other\t5\t%s\t0\t%s\n' "$BBBB" "1 comment from o'brien about \"the loop\"" >"$D/pending.tsv"
 run_pass
 check "a message with quotes is resumed as one intact argument" \
-  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: 1 comment from o'brien about \"the loop\". Check it out whether any action is needed and proceed if it is." \
+  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: 1 comment from o'brien about \"the loop\". Check it out whether any action is needed and proceed if it is. $YOUR_PR" \
   "$(calls | grep '^resume')"
 
 fresh
@@ -412,7 +414,7 @@ run_pass
 wait_for_received_lines $((before + 2))
 check "merged by someone else: NOTIFIED by inbox" "NOTIFIED Org/repo#11 inbox aaaa1111 merged by samrent-infuse" "$(out)"
 check "merged by someone else: the merge notice reached the inbox" \
-  "PR https://github.com/Org/repo/pull/11 was merged. Nothing is left to do on it; clean up its worktree and branch if you still have them." \
+  "PR https://github.com/Org/repo/pull/11 was merged. Do any after-merge step its reviews asked for, or hand it to whoever must do it in a PR comment that @-mentions them; then clean up its worktree and branch if you still have them." \
   "$(last_message)"
 check "merged: closed.txt has it" "1" "$(row closed.txt Org/repo 11 | wc -l | tr -d ' ')"
 check "merged: watch.tsv no longer has it" "" "$(row watch.tsv Org/repo 11)"
@@ -440,19 +442,41 @@ open_prs Org/repo "11 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
 echo '{"state":"MERGED","mergedBy":{"login":"Errmakov-Fuse"}}' >"$STUB_DIR/pr_view_10.json"
 before=$(received_lines)
 run_pass
-check "merged by me: no event" "" "$(out)"
-sleep 0.3
-check "merged by me: no message" "$before" "$(received_lines)"
+wait_for_received_lines $((before + 2))
+check "merged by me: told all the same (I merge; its session may have an after-merge step)" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 merged by Errmakov-Fuse" "$(out)"
 check "merged by me: closed.txt has it" "1" "$(row closed.txt Org/repo 10 | wc -l | tr -d ' ')"
+
+fresh
+enrol
+open_prs Org/repo "10 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+echo '{"state":"CLOSED","mergedBy":null}' >"$STUB_DIR/pr_view_11.json"
+echo '[{"event":"closed","actor":{"login":"errmakov"}}]' >"$STUB_DIR/timeline_11.json"
+before=$(received_lines)
+run_pass
+check "closed by me: no event" "" "$(out)"
+sleep 0.3
+check "closed by me: no message" "$before" "$(received_lines)"
 
 fresh
 enrol
 other_open "6 $T1"
 echo '{"state":"MERGED","mergedBy":{"login":"samrent-infuse"}}' >"$STUB_DIR/pr_view_5.json"
 run_pass
-check "merged, owner retired: no resume call" "" "$(resume_lines)"
-check "merged, owner retired: no event" "" "$(out)"
+check "merged, owner retired: resumed with the merge notice" \
+  "resume${T}$BBBB${T}PR https://github.com/Org/other/pull/5 was merged. Do any after-merge step its reviews asked for, or hand it to whoever must do it in a PR comment that @-mentions them; then clean up its worktree and branch if you still have them." \
+  "$(resume_lines)"
+check "merged, owner retired: NOTIFIED by resume" "NOTIFIED Org/other#5 resume bbbb2222 merged by samrent-infuse" "$(out)"
 check "merged, owner retired: closed.txt has it" "1" "$(row closed.txt Org/other 5 | wc -l | tr -d ' ')"
+
+fresh PR_UPDATE_RESUME_RETIRED=false
+enrol
+other_open "6 $T1"
+echo '{"state":"MERGED","mergedBy":{"login":"samrent-infuse"}}' >"$STUB_DIR/pr_view_5.json"
+run_pass
+check "merged, owner retired, resumes off: no resume, no event, nothing kept for later" "||" \
+  "$(resume_lines)|$(out)|$(row pending.tsv Org/other 5)"
+check "merged, owner retired, resumes off: forgotten all the same" "1" "$(row closed.txt Org/other 5 | wc -l | tr -d ' ')"
 
 fresh
 open_prs Org/repo "10 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
@@ -620,12 +644,12 @@ run_pass
 wait_for_received_lines $((before + 2))
 check "conflict at first sight, my PR: one NOTIFIED line" "NOTIFIED Org/repo#10 inbox aaaa1111 $CONFLICT" "$(out)"
 check "conflict: the inbox got it as an update" \
-  "There is an update on PR https://github.com/Org/repo/pull/10: $CONFLICT. Check it out whether any action is needed and proceed if it is." \
+  "There is an update on PR https://github.com/Org/repo/pull/10: $CONFLICT. Check it out whether any action is needed and proceed if it is. $YOUR_PR" \
   "$(last_message)"
 check "conflict: conflicts.tsv has my PR, not the other author's" "1|" \
   "$(row conflicts.tsv Org/repo 10 | wc -l | tr -d ' ')|$(row conflicts.tsv Org/repo 11)"
 check "conflict: the open list asks for mergeable, author, base, head and checks, and nothing more is called" "1|0|0" \
-  "$(count_calls '^gh pr list --repo Org/repo .*--json number,updatedAt,mergeable,author,baseRefName,headRefOid,statusCheckRollup$')|$(count_calls '^gh api')|$(count_calls '^gh pr view')"
+  "$(count_calls '^gh pr list --repo Org/repo .*--json number,updatedAt,mergeable,author,baseRefName,mergeStateStatus,headRefOid,statusCheckRollup$')|$(count_calls '^gh api')|$(count_calls '^gh pr view')"
 
 before=$(received_lines)
 run_pass
@@ -675,7 +699,7 @@ enrol
 other_open "5 $T1 CONFLICTING errmakov-fuse master" "6 $T1"
 run_pass
 check "conflict, owner retired: resumed with the conflict" \
-  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: $CONFLICT. Check it out whether any action is needed and proceed if it is." \
+  "resume${T}$BBBB${T}There is an update on PR https://github.com/Org/other/pull/5: $CONFLICT. Check it out whether any action is needed and proceed if it is. $YOUR_PR" \
   "$(resume_lines)"
 
 fresh PR_UPDATE_RESUME_RETIRED=false
@@ -762,7 +786,7 @@ wait_for_received_lines $((before + 2))
 check "a failed check on my PR: one NOTIFIED line naming it, its commit, its job and what still runs" \
   "NOTIFIED Org/repo#10 inbox aaaa1111 check Lint & Test failed on 87674b3 ($JOB/1), 1 other check still running: $ADVICE" "$(out)"
 check "a failed check: the inbox got it as an update" \
-  "There is an update on PR https://github.com/Org/repo/pull/10: check Lint & Test failed on 87674b3 ($JOB/1), 1 other check still running: $ADVICE. Check it out whether any action is needed and proceed if it is." \
+  "There is an update on PR https://github.com/Org/repo/pull/10: check Lint & Test failed on 87674b3 ($JOB/1), 1 other check still running: $ADVICE. Check it out whether any action is needed and proceed if it is. $YOUR_PR" \
   "$(last_message)"
 check "a failed check: checks.tsv has its job, and nothing more is called" "$JOB/1|0|0" \
   "$(check_keys)|$(count_calls '^gh api')|$(count_calls '^gh pr view')"
@@ -914,6 +938,156 @@ check "a failed check, dry run: DRY_RUN line, nothing recorded" \
   "$(out)|$(check_keys)"
 sleep 0.3
 check "a failed check, dry run: nothing sent" "$before" "$(received_lines)"
+
+# --- The last step: ready to merge, or blocked once green ---------------------------------
+GREEN="$(check_run 'Lint & Test' COMPLETED SUCCESS 1),$(check_run 'E2E Tests' COMPLETED SUCCESS 2)"
+# repo_merge <author> <updatedAt> <mergeStateStatus> [<checks JSON>]: Org/repo#10
+# at head $SHA, green unless told otherwise, the other watched PRs plain.
+repo_merge() {
+  local rest
+  rest=$(printf ',{"number":%s,"updatedAt":"%s"}' 11 "$T1" 14 "$T1" 15 "$T1" 18 "$T1" 30 "$T1")
+  printf '[{"number":10,"updatedAt":"%s","mergeable":"MERGEABLE","mergeStateStatus":"%s","author":{"login":"%s"},"baseRefName":"master","headRefOid":"%s","statusCheckRollup":[%s]}%s]\n' \
+    "$2" "$3" "$1" "$SHA" "${4-$GREEN}" "$rest" >"$STUB_DIR/pr_list_Org_repo.json"
+}
+# thread <resolved true|false> <author> <path> <line|null>
+thread() {
+  printf '{"isResolved":%s,"path":"%s","line":%s,"originalLine":7,"comments":{"nodes":[{"author":{"login":"%s"}}]}}' "$1" "$3" "$4" "$2"
+}
+threads() { echo "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[$(IFS=,; echo "$*")]}}}}}" >"$STUB_DIR/threads_10.json"; }
+merge_row() { row merge_state.tsv Org/repo 10 | cut -f3,5 | tr '\t' ' '; }
+BLOCKS="reply inside each thread, resolve the ones your pushed fix answers, and @-mention whoever must act on the rest"
+
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" CLEAN
+before=$(received_lines)
+run_pass
+check "my green PR GitHub lets merge: READY_TO_MERGE for me, once per head" "READY_TO_MERGE Org/repo#10 87674b3" "$(out)"
+sleep 0.3
+check "ready to merge: no message to the session (merging is mine), no thread call" "$before|0" \
+  "$(received_lines)|$(count_calls '^gh api graphql')"
+check "ready to merge: recorded" "$SHA ready" "$(merge_row)"
+check "ready to merge: the open list asks for mergeStateStatus" "1" \
+  "$(count_calls '^gh pr list --repo Org/repo .*--json number,updatedAt,mergeable,author,baseRefName,mergeStateStatus,headRefOid,statusCheckRollup$')"
+run_pass
+check "still ready next pass: no event" "" "$(out)"
+fresh
+enrol
+repo_merge samrent-infuse "$T1" CLEAN
+run_pass
+check "a teammate's green PR: nothing, nothing recorded" "|" "$(out)|$(merge_row)"
+
+# #1545: approved and green, but an inline thread answered outside it stayed open.
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" BLOCKED
+threads "$(thread false cerf-review tests/unit/test_resource_validator.py 1418)" "$(thread true samrent-infuse a.py 3)"
+before=$(received_lines)
+run_pass
+wait_for_received_lines $((before + 2))
+check "green but blocked on an open thread: its session is told what blocks it" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 GitHub blocks the merge on 1 unresolved review thread (cerf-review at tests/unit/test_resource_validator.py:1418): $BLOCKS" "$(out)"
+check "blocked on a thread: one thread call, recorded" "1|$SHA threads" "$(count_calls '^gh api graphql Org/repo#10$')|$(merge_row)"
+rm -f "$STUB_DIR/calls.log"
+run_pass
+check "still blocked and nothing moved: no event, no thread call" "|0" "$(out)|$(count_calls '^gh api graphql')"
+threads "$(thread true cerf-review tests/unit/test_resource_validator.py 1418)"
+repo_merge errmakov-fuse "$T2" CLEAN
+run_pass
+check "the thread resolved: ready to merge" "READY_TO_MERGE Org/repo#10 87674b3" "$(out)"
+
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" BLOCKED
+threads "$(thread false a x.py 1)" "$(thread false b y.py null)" "$(thread false c '' null)" "$(thread false d z.py 2)" "$(thread false e w.py 3)"
+run_pass
+check "five open threads: three named (an outdated one by its first line), the rest counted" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 GitHub blocks the merge on 5 unresolved review threads (a at x.py:1, b at y.py:7, c and 2 more): $BLOCKS" "$(out)"
+
+# Blocked on something else (an approval still to come): recorded, and no new
+# thread call until the PR moves.
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" BLOCKED
+run_pass
+check "green, blocked, no open thread: no event, recorded as waiting" "|$SHA waiting" "$(out)|$(merge_row)"
+rm -f "$STUB_DIR/calls.log"
+run_pass
+check "waiting, nothing moved: no thread call" "0" "$(count_calls '^gh api graphql')"
+repo_merge errmakov-fuse "$T2" BLOCKED
+threads "$(thread false cerf-review a.py 9)"
+answer comments_10.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "it moved: one thread call; a comment and the new block in one message, the threads named once" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse; GitHub blocks the merge on 1 unresolved review thread (cerf-review at a.py:9): $BLOCKS|1" \
+  "$(out)|$(count_calls '^gh api graphql')"
+
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" BLOCKED "$GREEN,$(running_run Slow 3)"
+run_pass
+check "blocked while a check still runs: no event, no thread call, nothing recorded" "|0|" \
+  "$(out)|$(count_calls '^gh api graphql')|$(merge_row)"
+
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" BEHIND
+run_pass
+check "green but behind its base: its session is told to update it" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 GitHub blocks the merge: the branch is behind master; merge or rebase master into it, run the tests and push" "$(out)"
+repo_merge errmakov-fuse "$T1" CLEAN
+run_pass
+check "updated and clean on the same head: ready to merge" "READY_TO_MERGE Org/repo#10 87674b3" "$(out)"
+
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" BLOCKED
+touch "$STUB_DIR/fail_threads_10"
+run_pass
+check "the thread call fails: no event, logged, nothing recorded" "|1|" \
+  "$(out)|$(grep -c 'reading the review threads of Org/repo#10 failed; looking again next pass' "$STATE/poll.log")|$(merge_row)"
+rm "$STUB_DIR/fail_threads_10"
+threads "$(thread false cerf-review a.py 9)"
+run_pass
+check "the thread call works again: told" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 GitHub blocks the merge on 1 unresolved review thread (cerf-review at a.py:9): $BLOCKS" "$(out)"
+
+# News on my PR names its open threads, whatever GitHub says of the merge.
+fresh
+enrol
+open_prs Org/repo "10 $T2 MERGEABLE errmakov-fuse master" "11 $T2" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+threads "$(thread false cerf-review tests/unit/test_resource_validator.py 1418)" "$(thread false samrent-infuse b.py 2)"
+answer comments_10.json "$(comment samrent-infuse "$F1")"
+answer comments_11.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "news on my PR: the open threads are named; a teammate's PR gets no thread call" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse; 2 unresolved review threads (cerf-review at tests/unit/test_resource_validator.py:1418 and samrent-infuse at b.py:2)|NOTIFIED Org/repo#11 inbox aaaa1111 1 comment from samrent-infuse|1" \
+  "$(out | tr '\n' '|' | sed 's/|$//')|$(count_calls '^gh api graphql')"
+
+fresh
+enrol
+open_prs Org/repo "10 $T2 MERGEABLE errmakov-fuse master" "11 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+touch "$STUB_DIR/fail_threads_10"
+answer comments_10.json "$(comment samrent-infuse "$F1")"
+run_pass
+check "news on my PR, the thread call fails: the news goes without them, logged" \
+  "NOTIFIED Org/repo#10 inbox aaaa1111 1 comment from samrent-infuse|1" \
+  "$(out)|$(grep -c 'reading the review threads of Org/repo#10 failed; its news goes without them' "$STATE/poll.log")"
+
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" CLEAN
+run_pass
+open_prs Org/repo "11 $T1" "14 $T1" "15 $T1" "18 $T1" "30 $T1"
+echo '{"state":"MERGED","mergedBy":{"login":"errmakov-fuse"}}' >"$STUB_DIR/pr_view_10.json"
+run_pass
+check "a merged PR's merge-state row goes with it" "" "$(merge_row)"
+
+fresh
+enrol
+repo_merge errmakov-fuse "$T1" CLEAN
+run_pass --dry-run
+check "ready to merge, dry run: DRY_RUN line, nothing recorded" "DRY_RUN READY_TO_MERGE Org/repo#10 87674b3|" "$(out)|$(merge_row)"
 
 # --- Dry run and backfill ---------------------------------------------------------------
 fresh

@@ -4,8 +4,15 @@
 # after lib.sh and watch_lib.sh; uses its event, pr_url, $dry_run and resume
 # counters.
 
-UPDATE_MESSAGE='There is an update on PR %s: %s. Check it out whether any action is needed and proceed if it is.'
-MERGED_MESSAGE='PR %s was merged. Nothing is left to do on it; clean up its worktree and branch if you still have them.'
+# The second sentence is what "done" means on a PR the session wrote: a finding
+# left in an approval, or a thread answered outside the thread, keeps it stuck.
+UPDATE_MESSAGE='There is an update on PR %s: %s. Check it out whether any action is needed and proceed if it is. If it is your PR: fix or answer every finding, minor ones and those inside approvals included; reply inside each review thread and resolve it once your fix is pushed; for anything you cannot do yourself, say in the thread who must do it and @-mention them.'
+MERGED_MESSAGE='PR %s was merged. Do any after-merge step its reviews asked for, or hand it to whoever must do it in a PR comment that @-mentions them; then clean up its worktree and branch if you still have them.'
+# The summary of an update telling a session GitHub blocks its green PR on
+# unresolved review threads; %s is unresolved_threads_of's summary line.
+THREADS_BLOCK_SUMMARY='GitHub blocks the merge on %s: reply inside each thread, resolve the ones your pushed fix answers, and @-mention whoever must act on the rest'
+# The summary of an update telling a session its green PR is behind <base>.
+BEHIND_SUMMARY='GitHub blocks the merge: the branch is behind %s; merge or rebase %s into it, run the tests and push'
 CLOSED_MESSAGE='PR %s was closed without merging. Nothing is left to do on it; clean up its worktree and branch if you still have them.'
 # The summary of an update telling a session its PR conflicts with <base>.
 CONFLICT_SUMMARY='merge conflicts with %s: rebase it onto %s, resolve them, run the tests and push'
@@ -44,7 +51,8 @@ session_registered() {
 # PR_UPDATE_RESUME_RETIRED is off), alive (the same, because the session has
 # come alive since the listing), nofolder (it would be resumed, but the folder
 # it ran in is gone, and waking it anywhere else would let it loose in an
-# unrelated repository) or skip (a closing notice for a retired session).
+# unrelated repository) or skip (a closed notice for a retired session, or a
+# merged notice for one that cannot be resumed in this pass).
 # Fails when the session cannot be read: a live session taken for a retired
 # one would be resumed, which starts a copy of it.
 route_for() {
@@ -58,17 +66,21 @@ route_for() {
     retired) ;;
     *) return 1 ;;
   esac
-  if [ "$kind" != update ]; then
+  # A merge notice wakes a retired session too, since the reviews may ask for a
+  # step after the merge, but only when it can go now: it is never kept for later.
+  local later=skip
+  [ "$kind" = update ] && later=""
+  if [ "$kind" = closed ]; then
     echo skip
   elif [ "$(json_bool "$PR_UPDATE_RESUME_RETIRED")" != true ]; then
-    echo off
+    echo "${later:-off}"
   elif ! can_resume "$owner"; then
-    echo wait
+    echo "${later:-wait}"
   elif session_registered "$owner"; then
-    echo alive
+    echo "${later:-alive}"
   else
     cwd=$(session_field "$owner" cwd) || return 1
-    if [ -n "$cwd" ] && [ -d "$cwd" ]; then echo resume; else echo nofolder; fi
+    if [ -n "$cwd" ] && [ -d "$cwd" ]; then echo resume; else echo "${later:-nofolder}"; fi
   fi
 }
 
