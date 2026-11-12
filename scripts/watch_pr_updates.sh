@@ -9,7 +9,10 @@
 #   2. Messages that could not go out on an earlier pass are tried again.
 #   3. A watched PR whose updatedAt moved has its comments and reviews read;
 #      what is new and not from PR_UPDATE_IGNORE_LOGINS (pr_updates.js) is
-#      sent to the owner. A PR seen for the first time is enrolled silently.
+#      sent to the owner. A PR seen for the first time is enrolled silently,
+#      unless a session created it: then all that is already on it is news,
+#      since a review bot can answer before the first pass sees the PR. The
+#      first pass without a seen.tsv enrols every PR silently (seen_seeding).
 #      One of MY_LOGINS' PRs that the open list says is CONFLICTING with its
 #      base is news once, first sight included, in the same message as its
 #      comments (check_open); it is news again only after it was mergeable.
@@ -106,6 +109,11 @@ MAX_NAMED_CHECKS=3   # failed checks named in one message; the rest are counted
 # the file, even empty, and from the next pass on a failure is news.
 checks_seeding=0
 [ -e "$WATCH_CHECKS" ] || checks_seeding=1
+# 1 on the very first pass (no seen.tsv yet): every PR is enrolled silently, so
+# turning the watcher on does not replay the history of every PR the sessions
+# ever created. The pass then writes the file, even empty.
+seen_seeding=0
+[ -e "$WATCH_SEEN" ] || seen_seeding=1
 
 now() { date -u +%FT%TZ; }
 pr_url() { echo "https://github.com/$1/pull/$2"; }
@@ -259,14 +267,22 @@ send_news() {
 # An open PR: enrolled on first sight, read when its updatedAt moved. <note>,
 # news the open list itself gave (a conflict), goes out in the same message as
 # its comments and reviews, or alone. Status 0 means the note was handed on.
+# A PR a session created is read in full on first sight: a review bot can
+# answer between `gh pr create` and the next pass, and a silent enrolment
+# would count that review as handled. Other PRs, and every PR on the very
+# first pass, are enrolled silently.
 check_pr() {
-  local repo="$1" n="$2" updated="$3" note="$4" seen stamp
+  local repo="$1" n="$2" updated="$3" note="$4" seen stamp created
   if ! seen=$(seen_get "$repo" "$n"); then
     log "reading the seen row of $repo#$n failed; trying again next pass"
     return 1
   fi
   if [ -z "$seen" ]; then
-    if [ "$backfill" -eq 1 ]; then
+    if ! created=$(watch_created "$repo" "$n"); then
+      log "reading the watch rows of $repo#$n failed; trying again next pass"
+      return 1
+    fi
+    if [ "$backfill" -eq 1 ] || { [ -n "$created" ] && [ "$seen_seeding" -eq 0 ]; }; then
       fetch_updates "$repo" "$n" "$updated" "" "$note"
       return
     fi
@@ -583,5 +599,6 @@ for repo in $(watch_prs | awk -F'\t' '!seen[$1]++ { print $1 }'); do
   check_repo "$repo"
 done
 [ "$checks_seeding" -eq 1 ] && { [ -e "$WATCH_CHECKS" ] || : >"$WATCH_CHECKS"; }
+[ "$seen_seeding" -eq 1 ] && { [ -e "$WATCH_SEEN" ] || : >"$WATCH_SEEN"; }
 log_no_updated_at
 exit 0

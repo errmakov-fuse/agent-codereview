@@ -1116,6 +1116,50 @@ check "backfill: a review waiting before first sight is news" \
 check "backfill: the comments are asked for without since" "1" \
   "$(count_calls '^gh api repos/Org/repo/issues/10/comments?per_page=100$')"
 
+# --- First sight of a PR a session created -------------------------------------------------
+# A review bot can answer between `gh pr create` and the next pass, so what is
+# already on a PR a session created is news; a PR only linked or mentioned is
+# still enrolled silently, and so is every PR on the very first pass.
+fresh
+answer reviews_15.json "$(review samrent-infuse APPROVED "$OLD")"
+run_pass
+check "first pass: a review already on a PR a session created stays silent" "" "$(out)"
+check "first pass: the created PR is not read" "0" "$(count_calls '/15/')"
+
+fresh
+open_prs Org/repo
+other_open
+run_pass
+check "first pass with no PR open: seen.tsv is still written" "present" "$(exists seen.tsv)"
+
+fresh
+enrol
+TRANSCRIPT="$WORK/home/projects/C--w-repo--claude-worktrees-HUB-1-x/$AAAA.jsonl"
+cp "$TRANSCRIPT" "$WORK/transcript.bak"
+# The fixture ends in an unfinished line; the leading newline closes it.
+printf '\n%s\n%s\n' \
+  '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t50","content":[{"type":"text","text":"https://github.com/Org/repo/pull/50"}]}]}}' \
+  '{"type":"pr-link","sessionId":"'"$AAAA"'","prNumber":51,"prUrl":"https://github.com/Org/repo/pull/51","prRepository":"Org/repo"}' \
+  >>"$TRANSCRIPT"
+repo_open "10 $T1" "11 $T1" "50 $T2" "51 $T2"
+answer reviews_50.json "$(review samrent-infuse APPROVED "$OLD")"
+answer comments_50.json "$(comment cerf-review "$OLD")"
+answer reviews_51.json "$(review samrent-infuse APPROVED "$OLD")"
+before=$(received_lines)
+run_pass
+wait_for_received_lines $((before + 2))
+check "a PR a session created: the reviews it got before first sight are news" \
+  "NOTIFIED Org/repo#50 inbox aaaa1111 an approval and 1 comment from cerf-review and samrent-infuse" "$(out)"
+check "a PR a session created: its comments are read in full" "1" \
+  "$(count_calls '^gh api repos/Org/repo/issues/50/comments?per_page=100$')"
+check "a PR a session created: seen moves to its updatedAt" "$T2" "$(seen_updated Org/repo 50)"
+check "a PR a session was linked to: enrolled silently, not read" "0 $T2" \
+  "$(count_calls '/51/') $(seen_updated Org/repo 51)"
+rm -f "$STUB_DIR/calls.log"
+run_pass
+check "the pass after: nothing again" "" "$(out)"
+cp "$WORK/transcript.bak" "$TRANSCRIPT"
+
 # --- Pending rows are retried first ----------------------------------------------------------
 fresh
 enrol
