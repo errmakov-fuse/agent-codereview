@@ -7,7 +7,9 @@
 #   sessions.tsv  short id, session id, live|retired, pid or -, startedAt ms, cwd, name
 #                 (a SESSION line from session_prs.js without the SESSION word)
 #   watch.tsv     repo, PR number, session id, source (created|linked|mentioned), first seen (ISO)
-#   seen.tsv      repo, PR number, updatedAt last looked at, newest activity handled
+#   seen.tsv      repo, PR number, updatedAt last looked at, newest activity handled.
+#                 Its absence means the watcher never ran here: that pass enrols
+#                 every PR silently, even one a session created (seen_seeding)
 #   pending.tsv   repo, PR number, session id, attempts, summary (a message not yet delivered)
 #   sent.log      epoch seconds, repo, PR number, session id, delivery, result, summary
 #   closed.txt    repo, PR number, closed (ISO)
@@ -216,6 +218,13 @@ watch_owner() {
       }
     }
     END { if (best) print best }' "$WATCH_ROWS"
+}
+
+# Prints "created" when a session's transcript says it created the PR, nothing
+# otherwise. Fails when watch.tsv cannot be read.
+watch_created() {
+  [ -f "$WATCH_ROWS" ] || return 0
+  awk -F'\t' -v repo="$1" -v n="$2" '$1 == repo && $2 == n && $4 == "created" { print "created"; exit }' "$WATCH_ROWS"
 }
 
 # --- Seen --------------------------------------------------------------------
