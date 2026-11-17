@@ -78,4 +78,20 @@ check "the lock stays held: the run is the next attempt, uncounted, the file as 
   "$(STATE_LOCK_WAIT_SECONDS=1; count_attempt 10@a)|$(cat "$ATTEMPTS")|$(grep -c 'attempts of 10@a are not counted' "$LOG")"
 rmdir "$ATTEMPTS.lock"
 
+# --- uncount_attempt ----------------------------------------------------------------
+# A run that could not sign in to Claude gives its attempt back.
+count_attempt 40@auth >/dev/null; count_attempt 40@auth >/dev/null
+uncount_attempt 40@auth
+check "uncount_attempt takes one back, other keys untouched" "1|2|1" \
+  "$(attempts_of 40@auth)|$(attempts_of 10@a)|$(attempts_of 11@b)"
+uncount_attempt 40@auth; uncount_attempt 40@auth
+check "uncount_attempt never goes below 0" "0" "$(attempts_of 40@auth)"
+uncount_attempt 41@never
+check "uncount_attempt on a key with no row adds none" "0" "$(grep -c '^41@never ' "$ATTEMPTS")"
+mkdir "$ATTEMPTS.lock"
+before=$(cat "$ATTEMPTS")
+check "the lock stays held: nothing taken back, the file as it was, logged" "$before|1" \
+  "$(STATE_LOCK_WAIT_SECONDS=1; uncount_attempt 10@a; cat "$ATTEMPTS")|$(grep -c 'attempt of 10@a is not taken back' "$LOG")"
+rmdir "$ATTEMPTS.lock"
+
 exit "$failed"

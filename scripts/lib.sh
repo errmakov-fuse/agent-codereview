@@ -14,6 +14,9 @@ LOG="$STATE_DIR/poll.log"
 FIRST_SEEN="$STATE_DIR/rereview_first_seen.txt"
 ATTEMPTS="$STATE_DIR/attempts.txt"
 GAVE_UP="$STATE_DIR/gave_up.txt"
+# Present while review runs cannot sign in to Claude: when it was first seen, and
+# what the CLI said. run_review.sh writes and removes it.
+AUTH_DOWN="$STATE_DIR/auth_down"
 RUNNING_DIR="$STATE_DIR/running"
 RUNS_DIR="$STATE_DIR/runs"
 REVIEWS_LOG="$STATE_DIR/reviews.log"
@@ -260,6 +263,21 @@ count_attempt() {
   fi
   unlock_state_file "$ATTEMPTS"
   echo "$((n + 1))"
+}
+
+# Takes back one of <key>'s failed-run counts. For a run that could not sign in to
+# Claude: it never looked at the PR, so it must not bring the PR nearer to GAVE_UP.
+uncount_attempt() {
+  local n
+  if ! lock_state_file "$ATTEMPTS"; then
+    log "the attempt of $1 is not taken back: $ATTEMPTS.lock stayed held"
+    return 0
+  fi
+  if n=$(attempts_of "$1") && [ -n "$n" ] && [ "$n" -gt 0 ]; then
+    rewrite_file "$ATTEMPTS" attempts_with "$1" "$((n - 1))" ||
+      log "taking back an attempt of $1 failed; $ATTEMPTS is unchanged"
+  fi
+  unlock_state_file "$ATTEMPTS"
 }
 
 # Parallel runs fetch into the same repository; git's ref locks then make one of

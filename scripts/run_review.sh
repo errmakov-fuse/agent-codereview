@@ -26,6 +26,9 @@
 #   NOT_POSTED <key> <why>        the run decided not to post (or --test)
 #   FAILED <key> <why>            the run broke; poll.sh tries again later
 #   BUSY <key>                    another run is reviewing it right now
+#   AUTH_FAILED <key> <why>       the run could not sign in to Claude; not counted
+#                                 against the PR; printed once per outage
+#   AUTH_WAIT <key>               the same, while the outage is already reported
 # Everything a run did is kept in state/runs/<n>-<time>/.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -233,6 +236,22 @@ read -r cost session subtype <<<"$summary"
 result_line=$(grep -m1 '^RESULT ' "$run_dir/result.txt" | tr -d '\r')
 echo "$(date -u +%FT%TZ) $key cost=\$$cost session=$session ${result_line:-no RESULT line, exit $exit_code $subtype}" >>"$REVIEWS_LOG"
 log "run $key ended: exit $exit_code, $subtype, \$$cost"
+
+# The run could not sign in to Claude, so the PR was never looked at: the attempt
+# is taken back, and the outage is reported once (AUTH_FAILED) however many runs
+# hit it. The file is created with noclobber, so parallel runs cannot both report.
+if [ "$subtype" = auth-failed ]; then
+  [ "$test_mode" -eq 0 ] && uncount_attempt "$key"
+  why=$(head -1 "$run_dir/result.txt" | tr -d '\r')
+  log "run $key could not sign in to Claude; not counted: $why"
+  if (set -o noclobber; echo "$(date -u +%FT%TZ) $why" >"$AUTH_DOWN") 2>/dev/null; then
+    echo "AUTH_FAILED $key $why"
+  else
+    echo "AUTH_WAIT $key"
+  fi
+  exit 1
+fi
+rm -f "$AUTH_DOWN"
 
 read -r _ outcome verdict link why <<<"$result_line"
 case "$outcome" in
