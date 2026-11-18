@@ -6,7 +6,7 @@ Reviews your teammates' pull requests for you with Claude Code. It requests you 
 
 A Windows scheduled task runs `windows/poll.ps1` every five minutes. That runs one pass of `scripts/watch_pr_updates.sh` (the PR update watcher, see below) and then one of `scripts/poll.sh`, which lists the open PRs with `gh` and decides what needs doing. A pass that finds nothing costs no tokens.
 
-Each PR that needs a review gets its own run of `scripts/run_review.sh`. It gathers the facts with `gh` and `git` (metadata, a checkout, the earlier review, a patch comparison), then starts a fresh headless Claude run that briefs one reviewer subagent, checks the findings the verdict rests on, posts, and exits. You get a Windows notification when a review starts and when it is posted.
+Each PR that needs a review gets its own run of `scripts/run_review.sh`. It gathers the facts with `gh` and `git` (metadata, a checkout, the earlier review, a patch comparison, the CI checks on the head), then starts a fresh headless Claude run that briefs one reviewer subagent, checks the findings the verdict rests on, posts, and exits. When a check on the head failed, the review says whether what it reports is real; for a check that reports a committed credential, it finds the flagged value in the diff and says whether it is a live secret or a false positive (a hash, a placeholder), so the author knows whether to rotate it or mark the finding. You get a Windows notification when a review starts and when it is posted.
 
 The reviewer uses no long-lived Claude session. That is where the cost was: a session that watched for weeks re-read its whole history, up to 965K tokens, on every wake-up, and a scheduled self-check every 10 minutes cost more than the reviews. A fresh run starts from about 10K tokens of context (`scripts/claude_lean.sh`) and is gone when the review is posted.
 
@@ -68,6 +68,7 @@ bash scripts/run_review.sh 1371           # review PR 1371 and post it
 bash tests/classify.sh                    # checks the classification rules; needs gh logged in
 bash tests/stalled.sh                     # checks the stalled-PR re-requests; needs gh logged in
 bash scripts/watch_pr_updates.sh --dry-run   # what a watcher pass would send now
+bash tests/pr_facts.sh                    # the facts and checks.md a review run starts from; needs only node
 bash tests/watch_pass.sh                  # whole watcher passes against stubs; needs only node
 bash scripts/measure_context.sh           # the fixed context of a lean run (about 1 cent)
 ```

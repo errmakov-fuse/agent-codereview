@@ -116,9 +116,13 @@ log "run $key started (attempt $attempt) in $run_dir"
 gh pr view "$number" --repo "$REPO" \
   --json url,title,body,author,state,isDraft,headRefOid,additions,deletions,changedFiles,files,reviews \
   >"$scratch/pr.json" 2>>"$LOG" || fail "gh pr view failed"
+# The checks with what each reports. gh exits non-zero when the PR has no checks
+# (empty output); pr_facts.js tells that apart from output it cannot read.
+gh pr checks "$number" --repo "$REPO" --json name,workflow,state,bucket,description,link \
+  >"$scratch/checks.json" 2>>"$LOG" || log "run $key: gh pr checks exited $?"
 
-# Free text (title, description, earlier review) goes to files; only plain tokens
-# come back to the shell.
+# Free text (title, description, earlier review, CI checks) goes to files; only
+# plain tokens come back to the shell.
 facts=$(SCRATCH="$(winpath "$scratch")" MY="$MY_LOGINS" node "$SCRIPTS/pr_facts.js") || fail "cannot read the PR facts"
 read -r url author state is_draft pr_head additions deletions changed_files \
   earlier_state earlier_commit my_verdicts <<<"$facts"
