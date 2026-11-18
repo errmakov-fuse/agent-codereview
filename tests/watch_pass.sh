@@ -1142,7 +1142,8 @@ printf '\n%s\n%s\n' \
   '{"type":"pr-link","sessionId":"'"$AAAA"'","prNumber":51,"prUrl":"https://github.com/Org/repo/pull/51","prRepository":"Org/repo"}' \
   >>"$TRANSCRIPT"
 repo_open "10 $T1" "11 $T1" "50 $T2" "51 $T2"
-answer reviews_50.json "$(review samrent-infuse APPROVED "$OLD")"
+# The bot's comment comes first, then the approval, as on #1601.
+answer reviews_50.json "$(review samrent-infuse APPROVED "$T1")"
 answer comments_50.json "$(comment cerf-review "$OLD")"
 answer reviews_51.json "$(review samrent-infuse APPROVED "$OLD")"
 before=$(received_lines)
