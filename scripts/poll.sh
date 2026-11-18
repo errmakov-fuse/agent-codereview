@@ -18,7 +18,9 @@
 #   STALLED #<n> <last reviewer> <login requested again, or ->
 #                                   my PR needs an approval and nobody is asked for one;
 #                                   once per head, though the request repeats (stalled.sh)
-#   and the POSTED / NOT_POSTED / FAILED line of each run (see run_review.sh).
+#   AUTH_RESTORED                   runs sign in to Claude again after an outage
+#   and the POSTED / NOT_POSTED / FAILED / AUTH_FAILED / AUTH_WAIT line of each run
+#   (see run_review.sh).
 # Prints nothing when there was nothing to do.
 #
 #   --dry-run   print what it would do; request nothing, start nothing
@@ -48,6 +50,10 @@ fi
 date -u +%FT%TZ >"$LAST_POLL"
 
 pids=()
+# While the Claude login is down (AUTH_DOWN), a pass starts one run: it costs
+# nothing when sign-in fails, and the first one that signs in clears the file.
+auth_was_down=0
+[ -f "$AUTH_DOWN" ] && auth_was_down=1
 while read -r kind number head reason reviewed; do
   [ -n "$kind" ] || continue
   run_args=("$number")
@@ -107,6 +113,10 @@ while read -r kind number head reason reviewed; do
     fi
     continue
   fi
+  if [ -f "$AUTH_DOWN" ] && [ "${#pids[@]}" -ge 1 ]; then
+    log "$key waits: review runs cannot sign in to Claude (see $AUTH_DOWN)"
+    continue
+  fi
   if [ "$(live_run_count)" -ge "$MAX_PARALLEL_REVIEWS" ]; then
     log "$key waits: $MAX_PARALLEL_REVIEWS reviews are running"
     continue
@@ -126,4 +136,8 @@ done <<<"$open"
 for pid in "${pids[@]}"; do
   wait "$pid"
 done
+if [ "$auth_was_down" -eq 1 ] && [ ! -f "$AUTH_DOWN" ]; then
+  log "review runs sign in to Claude again"
+  echo "AUTH_RESTORED"
+fi
 exit 0

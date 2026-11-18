@@ -144,6 +144,8 @@ $ErrorActionPreference = 'Continue'
         }
         'NOT_POSTED' { Show-Toast "PR $(Format-Key $words[1]) not reviewed" (($words | Select-Object -Skip 2) -join ' ') }
         'FAILED' { Show-Toast "PR $(Format-Key $words[1]): review run failed" 'It is tried again on a later poll. See state\poll.log.' }
+        'AUTH_FAILED' { Show-Toast 'PR reviewer cannot sign in to Claude' 'Run claude auth login, or set CLAUDE_TOKEN_FILE in config.env (see README). No PR is given up meanwhile; reviews resume by themselves.' }
+        'AUTH_RESTORED' { Show-Toast 'PR reviewer signs in again' 'Reviews that waited start on the next polls.' }
         'GAVE_UP' { Show-Toast "PR $(Format-Key $words[1]): giving up" 'Its review runs failed repeatedly. Review it by hand, or run scripts/run_review.sh.' }
         'STALLED' {
             $who = if ($words[3] -and $words[3] -ne '-') { "Requested $($words[3]) again." } else { 'Request a reviewer who can approve.' }

@@ -20,10 +20,20 @@
 #                            never takes a run for a session to tell about a PR
 #
 # The review gets its project knowledge from prompts/project-context.md instead.
-# Runs headless, so it needs no workspace trust; it uses the normal login.
+# Runs headless, so it needs no workspace trust. It signs in with the token in
+# CLAUDE_TOKEN_FILE when config.env names one, else with the normal login, which
+# reaches a time limit that an unattended run cannot renew.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_config || exit 2
+
+if [ -n "${CLAUDE_TOKEN_FILE:-}" ]; then
+  if [ -r "$CLAUDE_TOKEN_FILE" ] && token=$(tr -d '\r\n' <"$CLAUDE_TOKEN_FILE") && [ -n "$token" ]; then
+    export CLAUDE_CODE_OAUTH_TOKEN="$token"
+  else
+    log "CLAUDE_TOKEN_FILE $CLAUDE_TOKEN_FILE is missing or empty; this run uses the normal login"
+  fi
+fi
 
 LEAN_TOOLS="Bash,Read,Grep,Glob,Agent,Write"
 
