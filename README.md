@@ -39,6 +39,7 @@ The reviewer uses no long-lived Claude session. That is where the cost was: a se
 | `tests/watch_pass.sh` | Runs whole watcher passes against stub `gh` and `claude` commands (`tests/stubs/`), made-up sessions (`tests/fixtures/`) and a fake inbox (`tests/fake_inbox.js`). Nothing real is touched. |
 | `tests/pr_updates.sh`, `session_prs.sh`, `send_to_session.sh`, `watch_ledger.sh`, `config_defaults.sh` | Checks of the watcher's parts. |
 | `skills/irl/` | The `irl` skill: shows one concrete case for a statement that is too abstract. |
+| `tools/ssm-tunnel/` | Not part of the reviewer: a watcher that keeps the SSM port-forward to the inkhub prod database open on localhost:15432, and its README. |
 
 ## Requirements
 
