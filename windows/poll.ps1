@@ -17,7 +17,10 @@
 #                                                       "PR #n: merge conflicts",
 #                                                       "PR #n: failed checks", or
 #                                                       "PR #n: merge blocked"
-#   READY_TO_MERGE <repo>#<n> <head>                    "PR #n: ready to merge"
+#   READY_TO_MERGE <repo>#<n> <head>                    "PR #n: ready to merge", a
+#                                                       toast that stays until
+#                                                       dismissed, with an Open PR
+#                                                       button; a repeat replaces it
 #   NOT_DELIVERED <repo>#<n> <id> <why>                 "PR #n: session <id> not reached"
 #   WATCH_GAVE_UP <repo>#<n> <id>                       "PR #n: carry the message by hand"
 #   CAPPED_UPDATES <repo>#<n> <count>                   "PR #n: update not forwarded"
@@ -57,16 +60,44 @@ function Write-Event([string]$line) {
     [System.IO.File]::AppendAllText($eventLog, $stamped + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
 }
 
-function Show-Toast([string]$title, [string]$text) {
+# A toast that stays on screen until it is dismissed, with a button that opens
+# <url>. One with the same <tag> replaces it instead of stacking.
+function New-StickyToast([string]$title, [string]$text, [string]$url, [string]$tag) {
+    [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+    $e = { param($s) [System.Security.SecurityElement]::Escape($s) }
+    # The reminder scenario keeps a toast on screen only when it has a button.
+    $xml = "<toast scenario='reminder' activationType='protocol' launch='$(& $e $url)'>" +
+        "<visual><binding template='ToastGeneric'><text>$(& $e $title)</text><text>$(& $e $text)</text></binding></visual>" +
+        "<actions><action content='Open PR' activationType='protocol' arguments='$(& $e $url)'/>" +
+        "<action content='Dismiss' activationType='system' arguments='dismiss'/></actions></toast>"
+    $doc = [Windows.Data.Xml.Dom.XmlDocument]::new()
+    $doc.LoadXml($xml)
+    $toast = [Windows.UI.Notifications.ToastNotification]::new($doc)
+    # A tag too long is dropped without a word (64 characters on Windows 11, 16 on
+    # older builds), so the tag is a short hash of <tag>.
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($tag))
+    $toast.Tag = (-join ($hash | ForEach-Object { $_.ToString('x2') })).Substring(0, 16)
+    $toast.Group = 'ready-to-merge'
+    return $toast
+}
+
+# Shows a passing toast, or a sticky one (New-StickyToast) when <url> is given.
+function Show-Toast([string]$title, [string]$text, [string]$url = '', [string]$tag = '') {
     if ($NoToast) { return }
     try {
         [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-        $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
-            [Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-        $nodes = $template.GetElementsByTagName('text')
-        $nodes.Item(0).AppendChild($template.CreateTextNode($title)) | Out-Null
-        $nodes.Item(1).AppendChild($template.CreateTextNode($text)) | Out-Null
-        $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
+        if ($url) {
+            $toast = New-StickyToast $title $text $url $tag
+        }
+        else {
+            $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
+                [Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+            $nodes = $template.GetElementsByTagName('text')
+            $nodes.Item(0).AppendChild($template.CreateTextNode($title)) | Out-Null
+            $nodes.Item(1).AppendChild($template.CreateTextNode($text)) | Out-Null
+            $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
+        }
         # Windows PowerShell's own app id, so the toast needs no registration.
         $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
@@ -122,7 +153,10 @@ $ErrorActionPreference = 'Continue'
         'WATCH_GAVE_UP' { Show-Toast "PR ${pr}: carry the message by hand" "Session $($words[2]) could not be reached twice." }
         'WAITING' { Show-Toast "PR ${pr}: update waiting" "$(($words | Select-Object -Skip 3) -join ' '). Session $($words[2]) is asleep and automatic resumes are off." }
         'CAPPED_UPDATES' { Show-Toast "PR ${pr}: update not forwarded" "$($words[2]) messages today already (PR_UPDATE_MAX_PER_PR_PER_DAY)." }
-        'READY_TO_MERGE' { Show-Toast "PR ${pr}: ready to merge" "Checks are green and GitHub lets it merge ($($words[2])). Merging is yours." }
+        'READY_TO_MERGE' {
+            $url = 'https://github.com/{0}/pull/{1}' -f ($words[1] -replace '#.*$', ''), ($words[1] -replace '^.*#', '')
+            Show-Toast "PR ${pr}: ready to merge" "Checks are green and GitHub lets it merge ($($words[2])). Merging is yours; a draft is not reminded of." $url $words[1]
+        }
         'WATCH_FAILED' { Show-Toast 'PR watcher cannot list sessions' 'See state\poll.log.' }
     }
 }

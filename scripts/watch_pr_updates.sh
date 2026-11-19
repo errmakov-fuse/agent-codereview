@@ -24,8 +24,10 @@
 #      extra call.
 #      Once one of MY_LOGINS' PRs is green, GitHub's mergeStateStatus from the
 #      same list says what is left (merge_step): CLEAN prints READY_TO_MERGE
-#      once per head, for me to merge; BLOCKED on unresolved review threads, or
-#      BEHIND its base, tells its session what blocks it. Threads cost one
+#      once per head, for me to merge, and again every
+#      PR_UPDATE_READY_REMIND_HOURS while it stays ready on that head; BLOCKED
+#      on unresolved review threads, or BEHIND its base, tells its session what
+#      blocks it. Threads cost one
 #      GraphQL call, made only when such a PR is BLOCKED and moved, or has news
 #      (its news then names them too).
 #   4. A watched PR gone from the open list gets one closing notice and leaves
@@ -56,7 +58,8 @@
 #   WATCH_GAVE_UP <owner/repo>#<n> <session short id>           the message is in poll.log
 #   CAPPED_UPDATES <owner/repo>#<n> <count>
 #   READY_TO_MERGE <owner/repo>#<n> <head short sha>   one of my PRs is green and
-#                               GitHub lets it merge; said once per head
+#                               GitHub lets it merge; said once per head, and again
+#                               every PR_UPDATE_READY_REMIND_HOURS while it waits
 #   WAITING <owner/repo>#<n> <session short id> <summary>      the session is retired and
 #                               PR_UPDATE_RESUME_RETIRED is off; said once per new update
 #   WATCH_FAILED <why>          the sessions could not be listed; exit 1
@@ -380,7 +383,7 @@ check_open() {
     log "$repo#$n already had failed checks when failed-check notices started; recorded, not told: $checks_news"
     checks_news=""
   fi
-  merge_news="" merge_ready=0 merge_next=keep pr_threads="" pr_is_mine="$mine"
+  merge_news="" merge_ready=0 merge_next=keep merge_told="" pr_threads="" pr_is_mine="$mine"
   if [ "$mine" -eq 1 ] && ! merge_step "$repo" "$n" "$head" "$updated" "$merge_state" "$base" "$running" "$failed"; then
     log "reading the merge state of $repo#$n failed; trying again next pass"
     return 1
@@ -388,7 +391,7 @@ check_open() {
   check_pr "$repo" "$n" "$updated" "$(join_news "$(join_news "$note" "$checks_news")" "$merge_news")" || return
   [ -z "$note" ] || conflict_add "$repo" "$n"
   if [ "$merge_next" != keep ]; then
-    merge_state_set "$repo" "$n" "$head" "$updated" "$merge_next" || log "could not record the merge state of $repo#$n"
+    merge_state_set "$repo" "$n" "$head" "$updated" "$merge_next" "$merge_told" || log "could not record the merge state of $repo#$n"
     [ "$merge_ready" -eq 1 ] && event "READY_TO_MERGE $repo#$n ${head:0:7}"
   fi
   [ "$(printf '%s\n' "${checks_now[@]}" | sed '/^$/d')" = "$checks_had" ] && return 0
@@ -410,15 +413,16 @@ threads_phrase() {
 # (merge_ready; merging is mine to do). GitHub blocking it on unresolved review
 # threads, or because the branch is behind its base, means its session is told
 # what blocks it (merge_news). Each is said once per head and state
-# (merge_state.tsv), and BLOCKED for another reason (an approval still to come:
+# (merge_state.tsv), and ready again after PR_UPDATE_READY_REMIND_HOURS
+# (ready_reminder_due). BLOCKED for another reason (an approval still to come:
 # stalled.sh asks for it) is recorded as waiting. Threads are asked for only
 # when the PR is BLOCKED and moved since the last answer. Sets merge_next to the
 # state to record, or keep. Fails when merge_state.tsv cannot be read.
 merge_step() {
   local repo="$1" n="$2" head="$3" updated="$4" state="$5" base="$6" running="$7" failed="$8"
-  local row had_head="" had_updated="" had_state=""
+  local row had_head="" had_updated="" had_state="" had_told=""
   row=$(merge_state_get "$repo" "$n") || return 1
-  [ -n "$row" ] && IFS=$'\t' read -r had_head had_updated had_state _ <<<"$row"
+  [ -n "$row" ] && IFS=$'\t' read -r had_head had_updated had_state had_told _ <<<"$row"
   [ "$running" = 0 ] && [ "$failed" = - ] && [ "$head" != - ] || return 0
   case "$state" in
     CLEAN | HAS_HOOKS) merge_next=ready ;;
@@ -440,7 +444,13 @@ merge_step() {
     *) return 0 ;; # still being worked out, in conflict (told apart), a draft
   esac
   if [ "$had_head" = "$head" ] && [ "$had_state" = "$merge_next" ]; then
-    # Told already; the row moves only to remember a newer updatedAt.
+    if [ "$merge_next" = ready ] && ready_reminder_due "$had_told"; then
+      merge_ready=1
+      return 0
+    fi
+    # Told already; the row moves only to remember a newer updatedAt, and keeps
+    # when it was told.
+    merge_told="$had_told"
     [ "$had_updated" = "$updated" ] && merge_next=keep
     return 0
   fi
@@ -451,6 +461,20 @@ merge_step() {
     # shellcheck disable=SC2059
     threads) merge_news=$(printf "$THREADS_BLOCK_SUMMARY" "$(threads_phrase "$pr_threads")") ;;
   esac
+}
+
+# True when a PR still ready on the same head was last said to be ready (<told
+# at>, an ISO time) PR_UPDATE_READY_REMIND_HOURS ago or more; never when that is
+# 0. A toast missed or dismissed is then not the last word (#1699).
+ready_reminder_due() {
+  local cut
+  [ "$PR_UPDATE_READY_REMIND_HOURS" -gt 0 ] || return 1
+  [ -n "$1" ] || return 0
+  if ! cut=$(date -u -d "-$PR_UPDATE_READY_REMIND_HOURS hours" +%FT%TZ); then
+    log "date could not work out $PR_UPDATE_READY_REMIND_HOURS hours ago; no ready-to-merge reminder this pass"
+    return 1
+  fi
+  [[ ! "$1" > "$cut" ]]
 }
 
 # Takes a PR off the watch list for good, without a notice.
