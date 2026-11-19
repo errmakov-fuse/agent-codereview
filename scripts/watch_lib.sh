@@ -20,11 +20,13 @@
 #                 "<name>@<link or head sha>"); a row leaves when that check stops
 #                 failing. Its absence means failed-check notices never ran here:
 #                 that pass records the failures without telling (checks_seeding)
-#   merge_state.tsv  repo, PR number, head sha, updatedAt, state, since (ISO): what
-#                 the last pass made of one of my green PRs (merge_step): ready (I
-#                 was told it can be merged), threads or behind (its session was
-#                 told what blocks it) or waiting (blocked on something else, such
-#                 as an approval); a new state or head is acted on again
+#   merge_state.tsv  repo, PR number, head sha, updatedAt, state, told at (ISO):
+#                 what the last pass made of one of my green PRs (merge_step):
+#                 ready (I was told it can be merged), threads or behind (its
+#                 session was told what blocks it) or waiting (blocked on
+#                 something else, such as an approval); a new state or head is
+#                 acted on again, and ready also once PR_UPDATE_READY_REMIND_HOURS
+#                 have passed since "told at", which a newer updatedAt alone keeps
 #   unreachable.tsv  repo, first failure (ISO): a repository GitHub would not
 #                 resolve (deleted, or hidden from the current gh account), kept
 #                 until a pass reads it again, so the outage is logged once
@@ -352,10 +354,11 @@ merge_state_get() {
   watch_row_rest "$WATCH_MERGE_STATE" "$1" "$2"
 }
 
-# merge_state_set <repo> <n> <head sha> <updatedAt> <state>
+# merge_state_set <repo> <n> <head sha> <updatedAt> <state> [<told at>]: <told at>
+# is when the state was last said; now when left out.
 merge_state_set() {
   watch_put_row "$WATCH_MERGE_STATE" "$1" "$2" \
-    "$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4" "$5" "$(date -u +%FT%TZ)")"
+    "$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4" "$5" "${6:-$(date -u +%FT%TZ)}")"
 }
 
 merge_state_drop() {

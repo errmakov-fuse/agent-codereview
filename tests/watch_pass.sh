@@ -971,6 +971,35 @@ check "ready to merge: the open list asks for mergeStateStatus" "1" \
   "$(count_calls '^gh pr list --repo Org/repo .*--json number,updatedAt,mergeable,author,baseRefName,mergeStateStatus,headRefOid,statusCheckRollup$')"
 run_pass
 check "still ready next pass: no event" "" "$(out)"
+# #1699: one toast at 15:26 was missed, and the PR waited hours for a merge.
+# Still ready on the same head after PR_UPDATE_READY_REMIND_HOURS: said again.
+told_at() { row merge_state.tsv Org/repo 10 | cut -f6; }
+set_told_at() {
+  awk -F'\t' -v OFS='\t' -v t="$1" '$1 == "Org/repo" && $2 == 10 { $6 = t } 1' "$D/merge_state.tsv" >"$D/merge_state.tmp" &&
+    mv "$D/merge_state.tmp" "$D/merge_state.tsv"
+}
+set_told_at "$(date -u -d '-1 hour' +%FT%TZ)"
+run_pass
+check "still ready an hour after it was told: no event" "" "$(out)"
+an_hour_ago=$(told_at)
+repo_merge errmakov-fuse "$T2" CLEAN
+run_pass
+check "ready, the PR moved on the same head: no event, the row keeps when I was told" "|$an_hour_ago|$T2" \
+  "$(out)|$(told_at)|$(row merge_state.tsv Org/repo 10 | cut -f4)"
+set_told_at "$(date -u -d '-3 hours -1 minute' +%FT%TZ)"
+run_pass
+check "still ready 3 hours after it was told: READY_TO_MERGE again" "READY_TO_MERGE Org/repo#10 87674b3" "$(out)"
+run_pass
+check "the reminder restarts the clock: no event the pass after" "" "$(out)"
+fresh PR_UPDATE_READY_REMIND_HOURS=0
+enrol
+repo_merge errmakov-fuse "$T1" CLEAN
+run_pass
+check "PR_UPDATE_READY_REMIND_HOURS=0: ready is said the first time, and recorded" "READY_TO_MERGE Org/repo#10 87674b3|$SHA ready" \
+  "$(out)|$(merge_row)"
+set_told_at 2000-01-01T00:00:00Z
+run_pass
+check "PR_UPDATE_READY_REMIND_HOURS=0: ready is said once per head" "|2000-01-01T00:00:00Z" "$(out)|$(told_at)"
 fresh
 enrol
 repo_merge samrent-infuse "$T1" CLEAN

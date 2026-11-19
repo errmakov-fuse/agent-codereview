@@ -16,6 +16,7 @@ grep -v '^PR_UPDATE_' "$CONFIG_SRC" >"$TMP/defaults.env"
 # The same, plus a number that is not one.
 { cat "$TMP/defaults.env"; echo 'PR_UPDATE_MAX_PER_PR_PER_DAY=abc'; } >"$TMP/bad.env"
 # The same, with extra logins to ignore: MY_LOGINS must stay in the list.
+{ cat "$TMP/defaults.env"; echo 'PR_UPDATE_READY_REMIND_HOURS=2h'; } >"$TMP/bad_hours.env"
 { cat "$TMP/defaults.env"; echo 'PR_UPDATE_IGNORE_LOGINS="renovate[bot] ci-bot"'; } >"$TMP/ignore.env"
 
 # Runs load_config in a subshell against the given config and state dir, then
@@ -32,6 +33,7 @@ loaded() {
     echo "PR_UPDATE_MAX_PER_PR_PER_DAY = $PR_UPDATE_MAX_PER_PR_PER_DAY"
     echo "PR_UPDATE_MAX_RESUMES_PER_PASS = $PR_UPDATE_MAX_RESUMES_PER_PASS"
     echo "PR_UPDATE_RESUME_RETIRED = $PR_UPDATE_RESUME_RETIRED"
+    echo "PR_UPDATE_READY_REMIND_HOURS = $PR_UPDATE_READY_REMIND_HOURS"
     [ -d "$PR_UPDATES_DIR" ] && echo "-d \"\$PR_UPDATES_DIR\"" || echo "no PR_UPDATES_DIR"
   ) 2>&1
 }
@@ -60,6 +62,7 @@ PR_UPDATE_IGNORE_LOGINS = \"$my_logins dependabot[bot]\"
 PR_UPDATE_MAX_PER_PR_PER_DAY = 20
 PR_UPDATE_MAX_RESUMES_PER_PASS = 2
 PR_UPDATE_RESUME_RETIRED = true
+PR_UPDATE_READY_REMIND_HOURS = 3
 -d \"\$PR_UPDATES_DIR\"" "$(loaded "$TMP/defaults.env" "$TMP/state1")"
 
 # The shipped config sets its own extra ignored logins; every other setting it
@@ -76,5 +79,9 @@ check "extra ignored logins are added to MY_LOGINS, not put in their place" \
 check "a non-numeric PR_UPDATE_MAX_PER_PR_PER_DAY is refused" \
   "PR_UPDATE_MAX_PER_PR_PER_DAY must be a number
 load_config returned 1" "$(loaded "$TMP/bad.env" "$TMP/state4")"
+
+check "a non-numeric PR_UPDATE_READY_REMIND_HOURS is refused" \
+  "PR_UPDATE_READY_REMIND_HOURS must be a number
+load_config returned 1" "$(loaded "$TMP/bad_hours.env" "$TMP/state6")"
 
 exit "$failed"

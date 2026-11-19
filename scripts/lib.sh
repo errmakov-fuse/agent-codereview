@@ -51,7 +51,8 @@ load_config() {
   : "${PR_UPDATE_MAX_PER_PR_PER_DAY:=20}"
   : "${PR_UPDATE_MAX_RESUMES_PER_PASS:=2}"
   : "${PR_UPDATE_RESUME_RETIRED:=true}"
-  for name in PR_UPDATE_MAX_PER_PR_PER_DAY PR_UPDATE_MAX_RESUMES_PER_PASS; do
+  : "${PR_UPDATE_READY_REMIND_HOURS:=3}"
+  for name in PR_UPDATE_MAX_PER_PR_PER_DAY PR_UPDATE_MAX_RESUMES_PER_PASS PR_UPDATE_READY_REMIND_HOURS; do
     case "${!name}" in *[!0-9]*) echo "$name must be a number" >&2; return 1 ;; esac
   done
   mkdir -p "$STATE_DIR" "$RUNNING_DIR" "$RUNS_DIR" "$PR_UPDATES_DIR" &&
