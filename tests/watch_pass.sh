@@ -35,7 +35,7 @@ F1=2099-01-01T00:00:00Z
 F2=2099-01-02T00:00:00Z
 OLD=2020-01-01T00:00:00Z
 # The end of every update message: what "done" means on the session's own PR.
-YOUR_PR='If it is your PR: fix or answer every finding, minor ones and those inside approvals included; reply inside each review thread and resolve it once your fix is pushed; for anything you cannot do yourself, say in the thread who must do it and @-mention them.'
+YOUR_PR='If it is your PR: fix every finding you agree with, minor ones and those inside approvals included, and push the fix; answer only a finding you disagree with, saying why. Never hold a fix back to keep an approval: a new push gets reviewed again. Reply inside each review thread and resolve it once your fix is pushed. For anything you cannot do yourself, or leave for a later change, name who must do it in its thread (or in a PR comment when it has none) and @-mention them.'
 
 failed=0
 check() {
