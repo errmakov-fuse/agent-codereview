@@ -4,9 +4,12 @@
 # after lib.sh and watch_lib.sh; uses its event, pr_url, $dry_run and resume
 # counters.
 
-# The second sentence is what "done" means on a PR the session wrote: a finding
-# left in an approval, or a thread answered outside the thread, keeps it stuck.
-UPDATE_MESSAGE='There is an update on PR %s: %s. Check it out whether any action is needed and proceed if it is. If it is your PR: fix or answer every finding, minor ones and those inside approvals included; reply inside each review thread and resolve it once your fix is pushed; for anything you cannot do yourself, say in the thread who must do it and @-mention them.'
+# What follows "If it is your PR" is what "done" means on a PR the session
+# wrote: a finding left in an approval, or a thread answered outside the thread,
+# keeps it stuck. "Answer" is only for a finding the session disagrees with: on
+# #1796 and #1797 a session agreed with the minor items of an approval and left
+# them for "the next change", owned by nobody, to keep the approval.
+UPDATE_MESSAGE='There is an update on PR %s: %s. Check it out whether any action is needed and proceed if it is. If it is your PR: fix every finding you agree with, minor ones and those inside approvals included, and push the fix; answer only a finding you disagree with, saying why. Never hold a fix back to keep an approval: a new push gets reviewed again. Reply inside each review thread and resolve it once your fix is pushed. For anything you cannot do yourself, or leave for a later change, name who must do it in its thread (or in a PR comment when it has none) and @-mention them.'
 MERGED_MESSAGE='PR %s was merged. Do any after-merge step its reviews asked for, or hand it to whoever must do it in a PR comment that @-mentions them; then clean up its worktree and branch if you still have them.'
 # The summary of an update telling a session GitHub blocks its green PR on
 # unresolved review threads; %s is unresolved_threads_of's summary line.
